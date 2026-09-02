@@ -65,6 +65,7 @@ export function IngestProvider({ children }: { children: ReactNode }) {
   const [projectsLoading, setProjectsLoading] = useState(true);
   const [project, setProject] = useState("");
   const [deletingProject, setDeletingProject] = useState<string | null>(null);
+  const [renamingProject, setRenamingProject] = useState<string | null>(null);
   const [library, setLibrary] = useState<Library>(EMPTY_LIBRARY);
   const [selection, setSelection] = useState(NO_SELECTION);
   // Which project the loaded library belongs to. Loading is derived from it rather
@@ -228,6 +229,30 @@ export function IngestProvider({ children }: { children: ReactNode }) {
     [refreshProjects, showAlert, switchTo],
   );
 
+  const renameProject = useCallback(
+    async (name: string, nextName: string) => {
+      const target = nextName.trim();
+      if (!target) return false;
+      setRenamingProject(name);
+      try {
+        const result = await api.renameProject(name, target);
+        setPendingProject((current) =>
+          current?.toLowerCase() === name.toLowerCase() ? result.company : current,
+        );
+        await refreshProjects();
+        if (activeProject.current.toLowerCase() === name.toLowerCase()) switchTo(result.company);
+        showAlert(`Renamed ${name} to ${result.company}.`, { variant: "success" });
+        return true;
+      } catch (error) {
+        showAlert(error instanceof Error ? error.message : "The project could not be renamed.");
+        return false;
+      } finally {
+        setRenamingProject(null);
+      }
+    },
+    [refreshProjects, showAlert, switchTo],
+  );
+
   const upload = useCallback(
     async (files: File[]) => {
       const target = project;
@@ -345,7 +370,9 @@ export function IngestProvider({ children }: { children: ReactNode }) {
                 ...current,
                 project: canonical,
                 references: [
-                  ...current.references.filter((item) => !stored.some((added) => added.key === item.key)),
+                  ...current.references.filter(
+                    (item) => !stored.some((added) => added.key === item.key),
+                  ),
                   ...stored,
                 ].sort((a, b) => a.filename.localeCompare(b.filename)),
               }
@@ -353,12 +380,18 @@ export function IngestProvider({ children }: { children: ReactNode }) {
         );
         setSelection((current) =>
           current.project === target || current.project === canonical
-            ? { project: canonical, keys: new Set([...current.keys, ...stored.map((item) => item.key)]) }
+            ? {
+                project: canonical,
+                keys: new Set([...current.keys, ...stored.map((item) => item.key)]),
+              }
             : current,
         );
         setPendingProject(null);
         void refreshProjects();
-        showAlert(`Crawl complete: stored ${stored.length} Markdown reference${stored.length === 1 ? "" : "s"}.`, { variant: "success" });
+        showAlert(
+          `Crawl complete: stored ${stored.length} Markdown reference${stored.length === 1 ? "" : "s"}.`,
+          { variant: "success" },
+        );
       } catch (error) {
         showAlert(error instanceof Error ? error.message : "The site crawl failed.");
       } finally {
@@ -457,6 +490,8 @@ export function IngestProvider({ children }: { children: ReactNode }) {
       createProject,
       removeProject,
       deletingProject,
+      renameProject,
+      renamingProject,
       references: owned.references,
       loading: Boolean(project) && loadedFor !== project,
       uploading,
@@ -493,6 +528,8 @@ export function IngestProvider({ children }: { children: ReactNode }) {
       projectsLoading,
       remove,
       removeProject,
+      renameProject,
+      renamingProject,
       selectAll,
       selectProject,
       selected,

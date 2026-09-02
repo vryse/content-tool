@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from tortoise import Tortoise
+from tortoise.transactions import in_transaction
 
 from app.utils.config import tortoise_config
 from app.db.models import Feedback, LearnedPreference, ReferenceDocument, Run, StyleProfileRecord
@@ -239,6 +240,45 @@ async def delete_project(company: str) -> dict[str, int]:
         "preferences": await LearnedPreference.filter(company__iexact=name).delete(),
         "runs": await Run.filter(company__iexact=name).delete(),
     }
+
+
+async def rename_project(company: str, new_name: str) -> str:
+    """Move a project's database namespace without moving immutable R2 object keys.
+
+    Reference keys are opaque storage identifiers. Keeping them stable avoids a
+    copy/delete operation where a partial R2 failure could lose a source document;
+    all project lookups instead use the database ``company`` fields updated here.
+    """
+    old_name = await canonical_company(company)
+    target = new_name.strip()
+    if not old_name or not target:
+        raise ValueError("A project name is required.")
+    if old_name.casefold() != target.casefold() and await project_exists(target):
+        raise ValueError(f"A project named {target!r} already exists.")
+
+    async with in_transaction() as connection:
+        runs = await Run.filter(company__iexact=old_name).using_db(connection)
+        for run in runs:
+            requirements = dict(run.requirements_json)
+            requirements["company"] = target
+            await Run.filter(run_id=run.run_id).using_db(connection).update(
+                company=target,
+                requirements_json=requirements,
+            )
+
+        profile = await StyleProfileRecord.filter(company__iexact=old_name).using_db(connection).first()
+        if profile:
+            profile_json = dict(profile.profile_json)
+            profile_json["company"] = target
+            await StyleProfileRecord.filter(company__iexact=old_name).using_db(connection).update(
+                company=target,
+                profile_json=profile_json,
+            )
+
+        await ReferenceDocument.filter(company__iexact=old_name).using_db(connection).update(company=target)
+        await LearnedPreference.filter(company__iexact=old_name).using_db(connection).update(company=target)
+
+    return target
 
 
 # --- Reference documents --------------------------------------------------

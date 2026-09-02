@@ -37,6 +37,9 @@ export type IngestContextValue = {
   /** Delete a project and everything filed under it. */
   removeProject: (name: string) => Promise<void>;
   deletingProject: string | null;
+  /** Rename a project and retain all of its stored artefacts. */
+  renameProject: (name: string, nextName: string) => Promise<boolean>;
+  renamingProject: string | null;
 
   references: Reference[];
   loading: boolean;

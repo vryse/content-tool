@@ -78,6 +78,10 @@ export type LLMProvider = "anthropic" | "openai" | "google";
 
 export type TopicSuggestion = {
   topic: string;
+  target_audience: string;
+  target_word_count: number;
+  key_points: string[];
+  required_sections: string[];
 };
 
 export type ArticleRequirements = {
