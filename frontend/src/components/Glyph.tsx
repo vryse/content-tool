@@ -96,6 +96,20 @@ export const Close = (props: GlyphProps) => (
   </Glyph>
 );
 
+/** A new item added to the brief. */
+export const Plus = (props: GlyphProps) => (
+  <Glyph {...props}>
+    <path d="M8 3v10M3 8h10" />
+  </Glyph>
+);
+
+/** Three short rules: a handle for moving a brief item. */
+export const Grip = (props: GlyphProps) => (
+  <Glyph {...props}>
+    <path d="M5.5 4h5M5.5 8h5M5.5 12h5" />
+  </Glyph>
+);
+
 export const Discard = (props: GlyphProps) => (
   <Glyph {...props}>
     <path d="M2.5 4.5h11M4.75 4.5v9h6.5v-9M6.5 4.5v-2h3v2" />
@@ -123,6 +137,20 @@ export const Source = (props: GlyphProps) => (
 export const Spinner = ({ className = "", ...props }: GlyphProps) => (
   <Glyph className={`animate-spin ${className}`} {...props}>
     <path d="M8 2.25a5.75 5.75 0 1 1-5.75 5.75" />
+  </Glyph>
+);
+
+/** A lidded box: the archive of every saved draft, not just the one on screen. */
+export const Archive = (props: GlyphProps) => (
+  <Glyph {...props}>
+    <path d="M2.5 5.25h11M3.25 5.25v7.75h9.5V5.25M3.75 2.5h8.5l1 2.75h-10.5zM6.5 8h3" />
+  </Glyph>
+);
+
+/** Three rules of ascending height: a bar chart. Stored outcomes, ready to trend. */
+export const Chart = (props: GlyphProps) => (
+  <Glyph {...props}>
+    <path d="M2.75 13.5V2.5M2.75 13.5h10.5M5.25 13.5V9M8.5 13.5V6.25M11.75 13.5V4" />
   </Glyph>
 );
 

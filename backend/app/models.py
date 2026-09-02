@@ -28,6 +28,10 @@ class ParsedArticle(BaseModel):
     title: str
     sections: list[Section]
     full_text: str
+    # Structural visuals are recorded at parse time so project defaults can be
+    # derived from the corpus without asking the profiling model to guess.
+    has_table: bool = False
+    has_flowchart: bool = False
     # Required rather than defaulted: every corpus is namespaced by project, so a
     # parsed document that forgot to say which one it belongs to must not silently
     # join whichever project happened to be the first one built.
@@ -73,6 +77,16 @@ class VoicePattern(BaseModel):
     avoid_list: list[str] = Field(min_length=1)
 
 
+class VisualDefaults(BaseModel):
+    """Majority-backed defaults for the next article in a project."""
+
+    include_table: bool = False
+    include_flowchart: bool = False
+    table_reference_count: int = Field(default=0, ge=0)
+    flowchart_reference_count: int = Field(default=0, ge=0)
+    source_count: int = Field(default=0, ge=0)
+
+
 class ArticleObservation(BaseModel):
     filename: str
     heading_style: str
@@ -100,6 +114,9 @@ class StyleProfile(BaseModel):
     formatting_conventions: list[str]
     quantitative_baseline: TextMetrics
     quantitative_stddev: dict[str, float]
+    # A default keeps profiles stored before this feature readable. Rebuilding
+    # the profile fills this with deterministic counts from the selected corpus.
+    visual_defaults: VisualDefaults = Field(default_factory=VisualDefaults)
     generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     outliers: list[str] = Field(default_factory=list)
 
@@ -213,6 +230,7 @@ class ArticleRequirements(BaseModel):
     key_points: list[str]
     required_sections: list[str] = Field(default_factory=list)
     include_table: bool = False
+    table_instructions: str | None = Field(default=None, max_length=500)
     include_flowchart: bool = False
     tone_override: str | None = None
     notes: str | None = None
@@ -352,6 +370,73 @@ class CallRecord(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class AnalysisOutcome(BaseModel):
+    """One style-profile build, flattened for cross-run analytics.
+
+    The full ``StyleProfile`` already lives in ``style_profiles``; this is a
+    queryable summary alongside it so cost and corpus trends can be read
+    without parsing every stored profile's JSON.
+    """
+
+    company: str
+    source_article_count: int = Field(ge=0)
+    vocabulary_size: int = 0
+    outlier_count: int = 0
+    tone_descriptors: list[str] = Field(default_factory=list)
+    total_cost_usd: float = Field(default=0.0, ge=0)
+    total_tokens: int = Field(default=0, ge=0)
+    wall_time_seconds: float = Field(default=0.0, ge=0)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class GenerationOutcome(BaseModel):
+    """One generation run, flattened for cross-run analytics.
+
+    Mirrors what already sits inside ``runs.evaluation_json``; this row exists
+    so scores, cost, and revision lineage can be trended and compared across
+    runs without parsing that JSON per row.
+    """
+
+    run_id: str
+    company: str
+    parent_run_id: str | None = None
+    overall_score: float | None = Field(default=None, ge=0, le=100)
+    dimension_scores: dict[str, float] = Field(default_factory=dict)
+    section_count: int = 0
+    word_count: int = 0
+    missing_requirement_count: int = 0
+    total_cost_usd: float = Field(default=0.0, ge=0)
+    total_tokens: int = Field(default=0, ge=0)
+    wall_time_seconds: float = Field(default=0.0, ge=0)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class FeedbackOutcome(BaseModel):
+    """One human-feedback cycle, flattened for cross-run analytics.
+
+    Captures the split between human-authored and evaluator-derived
+    instructions and how many were ultimately accepted as durable
+    preferences, so feedback volume and rating trends are queryable directly.
+    """
+
+    run_id: str
+    company: str
+    rating: int | None = Field(default=None, ge=1, le=5)
+    human_instruction_count: int = Field(default=0, ge=0)
+    evaluator_instruction_count: int = Field(default=0, ge=0)
+    accepted_instruction_count: int = Field(default=0, ge=0)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class AnalyticsReport(BaseModel):
+    """Everything stored for a project, assembled for export/sharing."""
+
+    company: str
+    analysis_outcomes: list[AnalysisOutcome] = Field(default_factory=list)
+    generation_outcomes: list[GenerationOutcome] = Field(default_factory=list)
+    feedback_outcomes: list[FeedbackOutcome] = Field(default_factory=list)
+
+
 class GenerationRun(BaseModel):
     run_id: str
     requirements: ArticleRequirements
@@ -366,3 +451,18 @@ class GenerationRun(BaseModel):
         if len(headings) != len(set(headings)):
             raise ValueError("Draft section headings must be unique")
         return self
+
+
+class RunListItem(BaseModel):
+    """One saved run, light enough to list every run a project has without
+    shipping every run's full plan and article markdown in the same response."""
+
+    run_id: str
+    parent_run_id: str | None = None
+    title: str
+    topic: str
+    target_word_count: int
+    word_count: int
+    section_count: int
+    overall_score: float | None = None
+    created_at: datetime

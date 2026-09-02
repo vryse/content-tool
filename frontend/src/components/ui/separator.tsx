@@ -1,8 +1,23 @@
-import { type HTMLAttributes } from "react";
-import { cn } from "../../lib/utils";
+import { Separator as SeparatorPrimitive } from "@base-ui/react/separator"
 
-export function Separator({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
+import { cn } from "@/lib/utils"
+
+function Separator({
+  className,
+  orientation = "horizontal",
+  ...props
+}: SeparatorPrimitive.Props) {
   return (
-    <div role="separator" className={cn("h-px w-full shrink-0 bg-rule", className)} {...props} />
-  );
+    <SeparatorPrimitive
+      data-slot="separator"
+      orientation={orientation}
+      className={cn(
+        "shrink-0 bg-border data-horizontal:h-px data-horizontal:w-full data-vertical:w-px data-vertical:self-stretch",
+        className
+      )}
+      {...props}
+    />
+  )
 }
+
+export { Separator }

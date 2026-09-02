@@ -17,6 +17,17 @@ from app.utils.storage import cached_copy
 LOGGER = logging.getLogger(__name__)
 HEADING_RE = re.compile(r"^Heading\s+(\d+)$", re.IGNORECASE)
 MARKDOWN_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
+MARKDOWN_TABLE_SEPARATOR_RE = re.compile(
+    r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$", re.MULTILINE
+)
+MERMAID_FENCE_RE = re.compile(r"```mermaid[^\n]*\n(.*?)```", re.IGNORECASE | re.DOTALL)
+MERMAID_FLOW_RE = re.compile(
+    r"^\s*(?:flowchart|graph)\s+(?:TB|TD|BT|RL|LR)\b", re.IGNORECASE | re.MULTILINE
+)
+
+
+def _has_mermaid_flowchart(text: str) -> bool:
+    return any(MERMAID_FLOW_RE.search(block) for block in MERMAID_FENCE_RE.findall(text))
 
 
 def _section(heading: str, level: int, paragraphs: list[str], bullets: int, numbered: int) -> Section:
@@ -82,7 +93,12 @@ def load_docx_article(path: str | Path, company: str) -> ParsedArticle:
         ]
     full_text = "\n\n".join(p for section in sections for p in section.paragraphs)
     return ParsedArticle(
-        filename=path.name, title=title, sections=sections, full_text=full_text, company=company
+        filename=path.name,
+        title=title,
+        sections=sections,
+        full_text=full_text,
+        company=company,
+        has_table=bool(document.tables),
     )
 
 
@@ -120,6 +136,8 @@ def load_markdown_article(path: str | Path, company: str) -> ParsedArticle:
         sections=sections,
         full_text="\n\n".join(p for section in sections for p in section.paragraphs),
         company=company,
+        has_table=bool(MARKDOWN_TABLE_SEPARATOR_RE.search(text)),
+        has_flowchart=_has_mermaid_flowchart(text),
     )
 
 

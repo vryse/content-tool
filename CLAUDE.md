@@ -1,0 +1,4 @@
+- dont touch components/ui
+- always follow shadcn index.css if not implemented, please fix them
+- use motion animations for custom animations, avoid using initial -> animate animations
+- always import the base components(components/ui)

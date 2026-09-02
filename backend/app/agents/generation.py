@@ -31,9 +31,12 @@ RETRIEVED SKELETONS (not source bodies):
 {skeletons}
 """
 
-WRITER_PROMPT = """Write exactly one Markdown article section. Use the provided voice profile, observed vocabulary, and plan. Produce body prose only: do not repeat the heading, add meta-commentary, cite the prompt, or invent sourcing. Use any claimed statistic only if it was explicitly supplied in requirements.notes.
+WRITER_PROMPT = """Write exactly one Markdown article section. Use the provided requirements, voice profile, observed vocabulary, and plan. Produce body prose only: do not repeat the heading, add meta-commentary, cite the prompt, or invent sourcing. Use any claimed statistic only if it was explicitly supplied in requirements.notes.
 
-When include_table is true, include one concise GitHub-flavoured Markdown table only where it makes a comparison clearer. When include_flowchart is true, include one valid Mermaid flowchart only where it clarifies a process, using a fenced ```mermaid block with `flowchart TD` and short, factual node labels. Never use either visual as filler, and never put a Mermaid block inside a table.
+When include_table is true, include exactly one concise GitHub-flavoured Markdown table across the whole article. If table_instructions contains text, the table must show what the editor requested there. If table_instructions is empty, choose the most useful comparison automatically. Add the table only in the single best-fitting section; sections where it does not fit must not add another table. When include_flowchart is true, include one valid Mermaid flowchart only where it clarifies a process, using a fenced ```mermaid block with `flowchart TD` and short, factual node labels. Never use either visual as filler, and never put a Mermaid block inside a table.
+
+REQUIREMENTS:
+{requirements}
 
 FULL PLAN:
 {plan}
@@ -67,6 +70,11 @@ DRAFT:
 """
 
 CRITIQUE_APPLY_PROMPT = """Revise this complete draft using the critique while preserving its intent, title, and plan. Return a complete DraftArticle. Remove placeholders, meta-commentary, and unsupported facts. Do not add sections not in the plan.
+
+Preserve the visual requirements. When include_table is true and table_instructions contains text, the revised article must retain a single table that follows those instructions. When table_instructions is empty, retain the most useful table selected automatically.
+
+REQUIREMENTS:
+{requirements}
 
 PLAN:
 {plan}
@@ -179,6 +187,7 @@ async def write_article(
         result = await llm.structured(
             "generation_write_section",
             WRITER_PROMPT.format(
+                requirements=_json(requirements),
                 plan=_json(plan),
                 section=_json(planned),
                 voice=_json(profile.voice),
@@ -219,12 +228,21 @@ async def self_critique(
 
 
 async def apply_critique(
-    draft: DraftArticle, plan: ArticlePlan, critique: Critique, llm: LLMClient
+    draft: DraftArticle,
+    plan: ArticlePlan,
+    critique: Critique,
+    requirements: ArticleRequirements,
+    llm: LLMClient,
 ) -> DraftArticle:
     """Use a distinct revision call so critique quality can be inspected independently."""
     return await llm.structured(
         "generation_apply_critique",
-        CRITIQUE_APPLY_PROMPT.format(plan=_json(plan), critique=_json(critique), draft=draft.markdown),
+        CRITIQUE_APPLY_PROMPT.format(
+            requirements=_json(requirements),
+            plan=_json(plan),
+            critique=_json(critique),
+            draft=draft.markdown,
+        ),
         DraftArticle,
     )
 
@@ -247,7 +265,7 @@ async def generate_article(
     bus.stage("generation_self_critique", "done", detail=f"{len(critique.edits)} edits identified")
 
     bus.stage("generation_apply_critique")
-    revised = await apply_critique(draft, plan, critique, llm)
+    revised = await apply_critique(draft, plan, critique, requirements, llm)
     bus.stage("generation_apply_critique", "done")
     return plan, revised, critique
 
