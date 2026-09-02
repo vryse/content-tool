@@ -37,7 +37,7 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 def _cors_origins() -> list[str]:
     """Return browser origins allowed to call the API.
 
-    ``CORS_ORIGINS`` is comma-separated so one Render deployment can serve a
+    ``CORS_ORIGINS`` is comma-separated so one Railway deployment can serve a
     production frontend and any explicitly approved preview URL without opening
     the API to every website.
     """
