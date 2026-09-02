@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en" class="light">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Vryse Editorial Studio</title>
+    <meta
+      name="description"
+      content="Learn a company's writing style, generate an article, score it on nine dimensions, and revise it from human feedback, with every intermediate artifact visible."
+    />
+    <script>
+      // next-themes mounts after hydration, so in a client-only SPA it cannot prevent a
+      // first-paint flash. This runs before paint. Keep the storage key and the light/dark
+      // logic identical to the ThemeProvider config in src/main.tsx.
+      (function () {
+        try {
+          var stored = localStorage.getItem("vryse-theme");
+          var dark = stored === "dark";
+          var root = document.documentElement;
+          root.classList.toggle("dark", dark);
+          root.classList.toggle("light", !dark);
+          root.style.colorScheme = dark ? "dark" : "light";
+        } catch (_) {}
+      })();
+    </script>
+    <!-- The only two hex literals in the system. --paper-canvas lives in the async CSS
+         bundle, so without these the browser paints white first regardless of the class
+         set above. Mirrors of --paper-canvas in each mode; update together. -->
+    <style>
+      html {
+        background: #faf9f6;
+      }
+      html.dark {
+        background: #151310;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

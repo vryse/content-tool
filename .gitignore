@@ -1,0 +1,14 @@
+.env
+.venv/
+.venv311/
+__pycache__/
+*.py[cod]
+.streamlit/
+backend/data/reference/*
+!backend/data/reference/.gitkeep
+backend/data/profiles/*.json
+# R2 objects are mirrored here on demand; the bucket is the source of truth.
+backend/data/cache/
+backend/data/*.db
+backend/data/*.pkl
+backend/**/__pycache__/
