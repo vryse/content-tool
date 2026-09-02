@@ -1,0 +1,17 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "vryse-editorial-studio",
+  "main": "./worker/index.ts",
+  "compatibility_date": "2026-09-02",
+  "vars": {
+    "VITE_API_PROXY_TARGET": "https://content-tool-production-9869.up.railway.app",
+  },
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"],
+  },
+  "observability": {
+    "enabled": true,
+  },
+}

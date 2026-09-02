@@ -176,17 +176,32 @@ class ProfileBuildRequest(BaseModel):
 
 
 class TopicSuggestionRequest(BaseModel):
-    """Ask for a fresh article angle grounded in one project's references."""
+    """Ask for a complete article brief grounded in one project's references."""
 
     company: str = Field(min_length=1)
     llm_provider: LLMProvider = "anthropic"
     llm_model: str | None = None
+    topic: str | None = None
+    target_audience: str | None = None
+    target_word_count: int | None = Field(default=None, gt=0)
+    key_points: list[str] = Field(default_factory=list)
+    required_sections: list[str] = Field(default_factory=list)
 
 
 class TopicSuggestion(BaseModel):
-    """A concise, ready-to-use topic for the article brief."""
+    """A ready-to-use article brief, proposed from the reference corpus."""
 
     topic: str = Field(min_length=1, max_length=180)
+    target_audience: str = Field(min_length=1, max_length=180)
+    target_word_count: int = Field(ge=100, le=5_000)
+    key_points: list[str] = Field(min_length=2, max_length=6)
+    required_sections: list[str] = Field(min_length=2, max_length=8)
+
+
+class ProjectRenameRequest(BaseModel):
+    """A replacement display name for every artefact in a project namespace."""
+
+    name: str = Field(min_length=1, max_length=255)
 
 
 

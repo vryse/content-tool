@@ -8,6 +8,7 @@ import {
   Paragraph,
   Table,
   TableCell,
+  TableLayoutType,
   TableRow,
   TextRun,
   WidthType,
@@ -111,21 +112,63 @@ const TABLE_BORDERS = {
   insideVertical: { style: BorderStyle.NONE, size: 0, color: "auto" },
 };
 
+// The document uses docx's A4 default: 11,906 twips wide. With the document's
+// 1-inch (1,440 twip) margins, the table has exactly 9,026 twips available. Supplying that physical
+// width to the table, its grid and every cell avoids the tiny 100-twip fallback
+// grid that Pages otherwise prefers over percentage widths.
+const PRINTABLE_PAGE_WIDTH = 9026;
+const PREFERRED_MIN_COLUMN_PERCENT = 12;
+
+/** Approximate how much horizontal space a cell benefits from. Very long prose is
+ * capped because it can wrap; its full character count must not starve every other
+ * column. A long unbroken token still contributes its actual width. */
+function cellWidthDemand(value: string): number {
+  const plain = value
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/\*\*|__|\*|_/g, "")
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .trim();
+  const longestToken = Math.max(0, ...plain.split(/\s+/).map((token) => token.length));
+  return Math.max(1, longestToken, Math.min(plain.length, 48));
+}
+
+/**
+ * Splits the page width across columns by content length rather than evenly: an even split
+ * wastes width on short columns (a two-digit count) and starves a long one (a description),
+ * forcing it to wrap far more than the page width actually requires.
+ */
+function distributeColumnWidths(header: string[], rows: string[][]): number[] {
+  const demands = header.map((cell, index) =>
+    Math.max(cellWidthDemand(cell) * 1.15, ...rows.map((row) => cellWidthDemand(row[index] ?? ""))),
+  );
+  const minimumShare = Math.min(PREFERRED_MIN_COLUMN_PERCENT, 100 / header.length);
+  const flexibleShare = 100 - minimumShare * header.length;
+  const totalDemand = demands.reduce((sum, demand) => sum + demand, 0);
+  const percentages = demands.map(
+    (demand) => minimumShare + flexibleShare * (demand / totalDemand),
+  );
+
+  // Word's table grid uses integer twips. Correct the final column after rounding
+  // so the grid always equals the table's printable width exactly.
+  const widths = percentages.map((percentage) =>
+    Math.max(1, Math.round((percentage / 100) * PRINTABLE_PAGE_WIDTH)),
+  );
+  widths[widths.length - 1] += PRINTABLE_PAGE_WIDTH - widths.reduce((sum, width) => sum + width, 0);
+  return widths;
+}
+
 function buildTable(
   header: string[],
   aligns: (typeof AlignmentType)[keyof typeof AlignmentType][],
   rows: string[][],
 ): Table {
-  // Percentage widths, not a fixed DXA total: a fixed twip width has to be guessed against
-  // the page's printable area (page width minus margins) and silently overflows it if guessed
-  // too wide, which is what made the table blow past the margin instead of fitting the page.
-  const columnWidth = Math.floor(100 / header.length);
+  const columnWidths = distributeColumnWidths(header, rows);
   const headerRow = new TableRow({
     tableHeader: true,
     children: header.map(
       (cell, index) =>
         new TableCell({
-          width: { size: columnWidth, type: WidthType.PERCENTAGE },
+          width: { size: columnWidths[index], type: WidthType.DXA },
           margins: CELL_MARGINS,
           shading: { fill: HEADER_TINT },
           children: [
@@ -140,7 +183,7 @@ function buildTable(
         children: header.map(
           (_, index) =>
             new TableCell({
-              width: { size: columnWidth, type: WidthType.PERCENTAGE },
+              width: { size: columnWidths[index], type: WidthType.DXA },
               margins: CELL_MARGINS,
               children: [
                 new Paragraph({
@@ -153,7 +196,9 @@ function buildTable(
       }),
   );
   return new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
+    width: { size: PRINTABLE_PAGE_WIDTH, type: WidthType.DXA },
+    columnWidths,
+    layout: TableLayoutType.FIXED,
     borders: TABLE_BORDERS,
     rows: [headerRow, ...bodyRows],
   });
@@ -164,21 +209,50 @@ function svgIntrinsicSize(svg: string): { width: number; height: number } {
   if (viewBox) return { width: parseFloat(viewBox[1]), height: parseFloat(viewBox[2]) };
   const width = svg.match(/\swidth="([\d.]+)"/);
   const height = svg.match(/\sheight="([\d.]+)"/);
-  return { width: width ? parseFloat(width[1]) : 800, height: height ? parseFloat(height[1]) : 480 };
+  return {
+    width: width ? parseFloat(width[1]) : 800,
+    height: height ? parseFloat(height[1]) : 480,
+  };
 }
 
-// Fits within the printable width of a Letter page with 1" margins (8.5in - 2in, at 96dpi).
-const MAX_DIAGRAM_WIDTH = 620;
+/** Overrides the root <svg>'s width/height so the browser rasterizes it at exactly this pixel
+ *  size, rather than at its own intrinsic size and then stretching that bitmap: the source is
+ *  vector, so this keeps a diagram crisp whether it ends up scaled down or up to fit the page. */
+function withExplicitSize(svg: string, width: number, height: number): string {
+  return svg.replace(/^(\s*<svg\b)([^>]*)>/, (_match, open, attrs) => {
+    const stripped = attrs.replace(/\s(?:width|height)="[^"]*"/g, "");
+    return `${open}${stripped} width="${width}" height="${height}">`;
+  });
+}
+
+// The printable box a diagram may occupy on a Letter page with 1" margins: full text-column
+// width (8.5in - 2in, at 96dpi), and a height budget that leaves room for its heading and
+// caption without routinely spilling the diagram alone across a page break.
+const MAX_DIAGRAM_WIDTH = 624;
+const MAX_DIAGRAM_HEIGHT = 760;
+// A small flowchart is still rendered as vector, so scaling it up to use the page width costs
+// no sharpness — but capped, so a two-node diagram doesn't blow up into oversized boxes.
+const MAX_DIAGRAM_UPSCALE = 1.6;
 
 /** Rasterizes a rendered Mermaid SVG to PNG bytes: docx embeds bitmap images far more
- *  reliably across Word versions than it does inline SVG. */
-async function rasterizeSvg(svg: string): Promise<{ data: Uint8Array; width: number; height: number }> {
+ *  reliably across Word versions than it does inline SVG. Scales to fit both the page's width
+ *  and a height budget — a wide diagram fills the column, a tall one is capped by height
+ *  instead of forcing full width and running far down the page. */
+async function rasterizeSvg(
+  svg: string,
+): Promise<{ data: Uint8Array; width: number; height: number }> {
   const { width: intrinsicWidth, height: intrinsicHeight } = svgIntrinsicSize(svg);
-  const displayWidth = Math.min(MAX_DIAGRAM_WIDTH, intrinsicWidth);
-  const displayHeight = Math.max(1, Math.round(displayWidth * (intrinsicHeight / intrinsicWidth || 0.6)));
-  const scale = 2; // oversample so the embedded raster stays crisp at document scale
+  const scale = Math.min(
+    MAX_DIAGRAM_WIDTH / intrinsicWidth,
+    MAX_DIAGRAM_HEIGHT / intrinsicHeight,
+    MAX_DIAGRAM_UPSCALE,
+  );
+  const displayWidth = Math.max(1, Math.round(intrinsicWidth * scale));
+  const displayHeight = Math.max(1, Math.round(intrinsicHeight * scale));
+  const oversample = 2; // extra raster resolution beyond the displayed size, for crisp printing/zoom
 
-  const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
+  const sized = withExplicitSize(svg, displayWidth * oversample, displayHeight * oversample);
+  const url = URL.createObjectURL(new Blob([sized], { type: "image/svg+xml;charset=utf-8" }));
   try {
     const image = await new Promise<HTMLImageElement>((resolve, reject) => {
       const element = new Image();
@@ -187,8 +261,8 @@ async function rasterizeSvg(svg: string): Promise<{ data: Uint8Array; width: num
       element.src = url;
     });
     const canvas = document.createElement("canvas");
-    canvas.width = displayWidth * scale;
-    canvas.height = displayHeight * scale;
+    canvas.width = displayWidth * oversample;
+    canvas.height = displayHeight * oversample;
     const context = canvas.getContext("2d");
     if (!context) throw new Error("Canvas is unavailable.");
     context.fillStyle = "#ffffff";
@@ -196,7 +270,11 @@ async function rasterizeSvg(svg: string): Promise<{ data: Uint8Array; width: num
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
     if (!blob) throw new Error("Could not rasterize the diagram.");
-    return { data: new Uint8Array(await blob.arrayBuffer()), width: displayWidth, height: displayHeight };
+    return {
+      data: new Uint8Array(await blob.arrayBuffer()),
+      width: displayWidth,
+      height: displayHeight,
+    };
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -229,9 +307,11 @@ async function mermaidParagraphs(source: string): Promise<(Paragraph | Table)[]>
           italic: true,
         }),
       }),
-      ...source.split("\n").map(
-        (line) => new Paragraph({ children: [new TextRun({ text: line, font: "Consolas" })] }),
-      ),
+      ...source
+        .split("\n")
+        .map(
+          (line) => new Paragraph({ children: [new TextRun({ text: line, font: "Consolas" })] }),
+        ),
     ];
   }
 }
@@ -264,7 +344,9 @@ async function blocks(markdown: string): Promise<(Paragraph | Table)[]> {
         output.push(...(await mermaidParagraphs(body.join("\n"))));
       } else {
         for (const codeLine of body)
-          output.push(new Paragraph({ children: [new TextRun({ text: codeLine, font: "Consolas" })] }));
+          output.push(
+            new Paragraph({ children: [new TextRun({ text: codeLine, font: "Consolas" })] }),
+          );
       }
       continue;
     }

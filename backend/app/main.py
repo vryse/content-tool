@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import os
 import re
 import uuid
@@ -32,6 +33,7 @@ from app.models import (
     LLMProvider,
     ParsedArticle,
     ProfileBuildRequest,
+    ProjectRenameRequest,
     ProjectSummary,
     ReferenceRecord,
     RegenerationRequest,
@@ -39,7 +41,7 @@ from app.models import (
     TopicSuggestion,
     TopicSuggestionRequest,
 )
-from app.utils.config import DEFAULT_LLM_PROVIDER
+from app.utils.config import CORS_ORIGINS, DEFAULT_LLM_PROVIDER, OPENAI_WRITING_MODEL
 from app.utils.observability import summarize_run
 from app.utils.progress import ProgressBus
 from app.utils import storage
@@ -59,6 +61,7 @@ from app.store import (
     load_run,
     profile_sources,
     project_exists,
+    rename_project,
     save_reference,
     save_run,
 )
@@ -85,9 +88,9 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="VRYSE Writing API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Content-Type"],
 )
 
@@ -183,6 +186,17 @@ async def remove_project(company: str) -> dict[str, object]:
             raise HTTPException(502, str(error)) from error
         await storage.forget_cached(record.key, record.content_hash)
     return {"deleted": True, "removed": await delete_project(name)}
+
+
+@app.put("/api/projects/{company}")
+async def update_project(company: str, request: ProjectRenameRequest) -> dict[str, str]:
+    """Rename a project while preserving all of its stored artefacts."""
+    if not await project_exists(company):
+        raise HTTPException(404, f"No project named {company.strip()!r}.")
+    try:
+        return {"company": await rename_project(company, request.name)}
+    except ValueError as error:
+        raise HTTPException(409, str(error)) from error
 
 
 # --- Reference library ----------------------------------------------------
@@ -450,9 +464,19 @@ async def suggest_topic(request: TopicSuggestionRequest) -> TopicSuggestion:
         f"Title: {article.title}\nExcerpt: {article.full_text[:900].strip()}"
         for article in articles[:20]
     )
-    prompt = f"""You are an editorial strategist. Suggest one specific, useful new blog topic for {company}.
+    existing = {
+        "topic": request.topic,
+        "target_audience": request.target_audience,
+        "target_word_count": request.target_word_count,
+        "key_points": request.key_points,
+        "required_sections": request.required_sections,
+    }
+    prompt = f"""You are an editorial strategist. Propose a complete, useful article brief for {company}.
 
-Use the uploaded reference excerpts below to identify the client's domain and audience. The topic must be a fresh angle, not a paraphrase or retitle of an existing article. Return only a concise article topic; do not add a title label, explanation, quotation marks, or markdown.
+Use the uploaded reference excerpts below to identify the client's domain and audience. The topic must be a fresh angle, not a paraphrase or retitle of an existing article. Return a concise topic, a specific target audience, a realistic target word count, 2–6 key points, and 2–8 required sections. Do not use markdown or explanations.
+
+The editor may already have supplied part of the brief. Treat those values as context when proposing the remaining fields, but still return a complete brief. Do not replace the editor's choices:
+{json.dumps(existing)}
 
 References:
 {corpus}
@@ -467,6 +491,11 @@ References:
 
 @app.post("/api/generate")
 async def generate(requirements: ArticleRequirements) -> StreamingResponse:
+    # Keep profile/topic work on the economical default, but record the stronger
+    # writing model in the run so targeted regenerations use the same quality bar.
+    if requirements.llm_provider == "openai" and not requirements.llm_model:
+        requirements = requirements.model_copy(update={"llm_model": OPENAI_WRITING_MODEL})
+
     async def producer(bus: ProgressBus) -> Any:
         bus.stage("load_profile")
         profile = await load_profile(requirements.company)

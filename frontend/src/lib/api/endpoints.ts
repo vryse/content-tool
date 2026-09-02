@@ -26,6 +26,12 @@ export const api = {
       { method: "DELETE" },
     ),
 
+  renameProject: (name: string, nextName: string) =>
+    request<{ company: string }>(`/api/projects/${company(name)}`, {
+      method: "PUT",
+      body: JSON.stringify({ name: nextName }),
+    }),
+
   /** Resolves to null when no profile has been cached for the project. */
   profile: (name: string) => request<StyleProfile | null>(`/api/profile/${company(name)}`),
 
@@ -81,7 +87,12 @@ export const api = {
   crawlReferences: (
     payload: { company: string; client_url: string; blog_path: string; limit: number },
     onProgress?: OnProgress,
-  ) => stream<CrawlResult>("/api/references/crawl", { method: "POST", body: JSON.stringify(payload) }, onProgress),
+  ) =>
+    stream<CrawlResult>(
+      "/api/references/crawl",
+      { method: "POST", body: JSON.stringify(payload) },
+      onProgress,
+    ),
 
   deleteReference: (key: string) =>
     request<{ deleted: boolean }>(
@@ -89,8 +100,17 @@ export const api = {
       { method: "DELETE" },
     ),
 
-  suggestTopic: (payload: { company: string; llm_provider: ArticleRequirements["llm_provider"]; llm_model?: string | null }) =>
-    request<TopicSuggestion>("/api/topics/suggest", { method: "POST", body: JSON.stringify(payload) }),
+  suggestTopic: (
+    payload: Pick<
+      ArticleRequirements,
+      "company" | "llm_provider" | "llm_model" | "key_points" | "required_sections"
+    > &
+      Partial<Pick<ArticleRequirements, "topic" | "target_audience" | "target_word_count">>,
+  ) =>
+    request<TopicSuggestion>("/api/topics/suggest", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 
   generate: (requirements: ArticleRequirements, onProgress?: OnProgress) =>
     stream<GenerationRun>(

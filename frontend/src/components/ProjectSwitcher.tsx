@@ -26,11 +26,15 @@ export function ProjectSwitcher({ compact }: { compact?: boolean }) {
     createProject,
     removeProject,
     deletingProject,
+    renameProject,
+    renamingProject,
   } = useIngest();
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState("");
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
   const container = useRef<HTMLDivElement>(null);
   const field = useRef<HTMLInputElement>(null);
 
@@ -43,6 +47,8 @@ export function ProjectSwitcher({ compact }: { compact?: boolean }) {
     setCreating(false);
     setDraft("");
     setConfirming(null);
+    setRenaming(null);
+    setRenameDraft("");
   }, []);
 
   useEffect(() => {
@@ -120,6 +126,7 @@ export function ProjectSwitcher({ compact }: { compact?: boolean }) {
               {projects.map((item) => {
                 const active = item.company === project;
                 const pending = confirming === item.company;
+                const editing = renaming === item.company;
                 return (
                   <li key={item.company} className="group relative">
                     <button
@@ -130,7 +137,7 @@ export function ProjectSwitcher({ compact }: { compact?: boolean }) {
                         selectProject(item.company);
                         close();
                       }}
-                      className={`flex w-full items-start gap-2 border-l-2 py-2 pl-2 pr-8 text-left transition-colors duration-100 hover:bg-inset ${
+                      className={`flex w-full items-start gap-2 border-l-2 py-2 pl-2 pr-32 text-left transition-colors duration-100 hover:bg-inset ${
                         active ? "border-brand bg-brand-tint/40" : "border-transparent"
                       }`}
                     >
@@ -156,19 +163,81 @@ export function ProjectSwitcher({ compact }: { compact?: boolean }) {
                         </span>
                       </span>
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setConfirming(pending ? null : item.company)}
-                      disabled={deletingProject === item.company}
-                      aria-label={`Delete project ${item.company}`}
-                      className="absolute right-1.5 top-2 rounded-[2px] p-1 text-ink-3 opacity-0 transition-opacity duration-100 hover:text-negative focus-visible:opacity-100 group-hover:opacity-100 disabled:opacity-40"
-                    >
-                      {deletingProject === item.company ? (
-                        <Spinner size={13} />
-                      ) : (
-                        <Discard size={13} />
-                      )}
-                    </button>
+                    <div className="absolute right-1.5 top-2 flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setConfirming(null);
+                          setRenaming(editing ? null : item.company);
+                          setRenameDraft(item.company);
+                        }}
+                        disabled={
+                          renamingProject === item.company || deletingProject === item.company
+                        }
+                        className="rounded-[2px] px-1.5 py-1 text-[0.6875rem] font-medium text-ink-3 transition-colors duration-100 hover:bg-inset hover:text-ink focus-visible:bg-inset focus-visible:text-ink disabled:opacity-40"
+                      >
+                        {renamingProject === item.company ? <Spinner size={13} /> : "Rename"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRenaming(null);
+                          setConfirming(pending ? null : item.company);
+                        }}
+                        disabled={
+                          deletingProject === item.company || renamingProject === item.company
+                        }
+                        aria-label={`Delete project ${item.company}`}
+                        className="inline-flex items-center gap-1 rounded-[2px] px-1.5 py-1 text-[0.6875rem] font-medium text-ink-3 transition-colors duration-100 hover:bg-negative/10 hover:text-negative focus-visible:bg-negative/10 focus-visible:text-negative disabled:opacity-40"
+                      >
+                        {deletingProject === item.company ? (
+                          <Spinner size={13} />
+                        ) : (
+                          <>
+                            <Discard size={13} />
+                            Delete
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    {editing && (
+                      <form
+                        className="grid gap-2 border-t border-rule-faint bg-inset px-3 py-2.5"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          void renameProject(item.company, renameDraft).then((renamed) => {
+                            if (renamed) close();
+                          });
+                        }}
+                      >
+                        <label className="t-meta leading-[1.5]" htmlFor={`rename-${item.company}`}>
+                          Rename project
+                        </label>
+                        <Input
+                          id={`rename-${item.company}`}
+                          autoFocus
+                          value={renameDraft}
+                          onChange={(event) => setRenameDraft(event.target.value)}
+                        />
+                        <div className="flex gap-2">
+                          <Button
+                            type="submit"
+                            className="flex-1"
+                            disabled={!renameDraft.trim() || renamingProject === item.company}
+                          >
+                            Save name
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="quiet"
+                            className="flex-1"
+                            onClick={() => setRenaming(null)}
+                          >
+                            Cancel
+                          </Button>
+                        </div>
+                      </form>
+                    )}
                     {pending && (
                       <div className="border-t border-rule-faint bg-inset px-3 py-2.5">
                         <p className="t-meta leading-[1.5]">

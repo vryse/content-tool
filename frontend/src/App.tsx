@@ -22,13 +22,12 @@ import { useIngest } from "./hooks/useIngest";
  */
 const initialBrief: Omit<Requirements, "company"> = {
   topic: "",
-  target_audience: "Security and privacy leaders",
-  target_word_count: 900,
-  key_points: [
-    "Map PII before it reaches the model",
-    "Use tokenisation at the application boundary",
-  ],
-  required_sections: ["What changes with AI copilots", "A practical control plane"],
+  target_audience: "",
+  // Zero renders as an empty numeric field until the editor enters a value or
+  // accepts a reference-based suggestion. The API still rejects it on generation.
+  target_word_count: 0,
+  key_points: [],
+  required_sections: [],
   include_table: false,
   include_flowchart: false,
   llm_provider: "openai",
@@ -114,8 +113,28 @@ export default function App() {
         company: project,
         llm_provider: brief.llm_provider,
         llm_model: brief.llm_model,
+        topic: brief.topic || undefined,
+        target_audience: brief.target_audience || undefined,
+        target_word_count: brief.target_word_count || undefined,
+        key_points: brief.key_points,
+        required_sections: brief.required_sections,
       });
-      update("topic", suggestion.topic);
+      // A suggestion is a starting point, never a replacement for the editor's
+      // work. Fill each unanswered field independently so partially completed
+      // briefs retain their deliberate choices.
+      setBrief((current) => ({
+        ...current,
+        topic: current.topic.trim() ? current.topic : suggestion.topic,
+        target_audience: current.target_audience.trim()
+          ? current.target_audience
+          : suggestion.target_audience,
+        target_word_count:
+          current.target_word_count > 0 ? current.target_word_count : suggestion.target_word_count,
+        key_points: current.key_points.length ? current.key_points : suggestion.key_points,
+        required_sections: current.required_sections.length
+          ? current.required_sections
+          : suggestion.required_sections,
+      }));
     } catch (error) {
       showAlert(error instanceof Error ? error.message : "Could not suggest a topic.");
     } finally {
@@ -277,7 +296,7 @@ export default function App() {
                 <Input
                   type="number"
                   min={100}
-                  value={brief.target_word_count}
+                  value={brief.target_word_count || ""}
                   onChange={(e) => update("target_word_count", Number(e.target.value))}
                 />
               </Field>

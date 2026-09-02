@@ -24,14 +24,18 @@ def _model_for(provider: LLMProvider, model: str | None) -> Any:
             return ChatAnthropic(model=selected_model, anthropic_api_key=os.getenv("ANTHROPIC_API_KEY"), max_tokens=4096)
         if provider == "openai":
             from langchain_openai import ChatOpenAI
-            # Structured calls use OpenAI function tools. Reasoning-enabled models
-            # reject tools on the chat-completions endpoint unless effort is none.
-            return ChatOpenAI(
-                model=selected_model,
-                api_key=os.getenv("OPENAI_API_KEY"),
-                max_tokens=4096,
-                reasoning_effort="none",
-            )
+            # gpt-5 reasoning models default to a non-none effort, which Chat
+            # Completions cannot combine with function tools. Non-reasoning
+            # models such as gpt-4o-mini reject this argument altogether.
+            reasoning_models = ("gpt-5", "o1", "o3", "o4")
+            options: dict[str, Any] = {
+                "model": selected_model,
+                "api_key": os.getenv("OPENAI_API_KEY"),
+                "max_tokens": 4096,
+            }
+            if selected_model.lower().startswith(reasoning_models):
+                options["reasoning_effort"] = "none"
+            return ChatOpenAI(**options)
         from langchain_google_genai import ChatGoogleGenerativeAI
         return ChatGoogleGenerativeAI(
             model=selected_model,

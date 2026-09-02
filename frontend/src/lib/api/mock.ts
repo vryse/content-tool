@@ -58,13 +58,16 @@ async function walk<T>(value: T, stages: string[], ms: number, onProgress?: OnPr
  */
 /** Mutable so the ingest page's upload and delete actions are exercisable offline. */
 let mockReferences: ReferenceRecord[] = MOCK_REFERENCES;
+const projectNames = new Map(MOCK_PROJECTS.map((project) => [project.company, project.company]));
 
 /** Recomputed from the mutable reference list so uploads move the project counts. */
 const mockProjects = () =>
   MOCK_PROJECTS.map((project) => {
-    const owned = mockReferences.filter((item) => item.company === project.company);
+    const company = projectNames.get(project.company) ?? project.company;
+    const owned = mockReferences.filter((item) => item.company === company);
     return {
       ...project,
+      company,
       reference_count: owned.length,
       document_word_count: owned.reduce((total, item) => total + (item.word_count ?? 0), 0),
     };
@@ -72,7 +75,7 @@ const mockProjects = () =>
     // A project created offline exists only as documents filed under a new name,
     // which is exactly how the backend derives one.
     [...new Set(mockReferences.map((item) => item.company))]
-      .filter((name) => !MOCK_PROJECTS.some((project) => project.company === name))
+      .filter((name) => ![...projectNames.values()].some((project) => project === name))
       .map((company) => {
         const owned = mockReferences.filter((item) => item.company === company);
         return {
@@ -97,14 +100,31 @@ export const mockApi: Api = {
     );
     return wait({ deleted: true, removed: {} }, 320);
   },
+  renameProject: (name, nextName) => {
+    const source = [...projectNames.entries()].find(
+      ([, current]) => current.toLowerCase() === name.toLowerCase(),
+    )?.[0];
+    if (source) projectNames.set(source, nextName);
+    mockReferences = mockReferences.map((item) =>
+      item.company.toLowerCase() === name.toLowerCase() ? { ...item, company: nextName } : item,
+    );
+    return wait({ company: nextName }, 320);
+  },
   /** Only the first fixture project has one, so the second exercises the empty state. */
   profile: (name) =>
-    wait(name.toLowerCase() === MOCK_PROFILE.company.toLowerCase() ? MOCK_PROFILE : null, 260),
+    wait(
+      name.toLowerCase() ===
+        (projectNames.get(MOCK_PROFILE.company) ?? MOCK_PROFILE.company).toLowerCase()
+        ? { ...MOCK_PROFILE, company: name }
+        : null,
+      260,
+    ),
   profileSources: (name) =>
     wait(
-      name.toLowerCase() === MOCK_PROFILE.company.toLowerCase()
+      name.toLowerCase() ===
+        (projectNames.get(MOCK_PROFILE.company) ?? MOCK_PROFILE.company).toLowerCase()
         ? mockReferences
-            .filter((item) => item.company === MOCK_PROFILE.company)
+            .filter((item) => item.company.toLowerCase() === name.toLowerCase())
             .slice(0, 3)
             .map((item) => item.key)
         : [],
@@ -157,7 +177,12 @@ export const mockApi: Api = {
       ...mockReferences.filter((item) => !added.some((entry) => entry.key === item.key)),
       ...added,
     ];
-    return walk({ job_id: "mock-firecrawl-job", stored: added }, ["Queuing crawl", "Collecting pages", "Saving Markdown"], 1_200, onProgress);
+    return walk(
+      { job_id: "mock-firecrawl-job", stored: added },
+      ["Queuing crawl", "Collecting pages", "Saving Markdown"],
+      1_200,
+      onProgress,
+    );
   },
   deleteReference: (key) => {
     mockReferences = mockReferences.filter((item) => item.key !== key);
@@ -179,6 +204,13 @@ export const mockApi: Api = {
     wait(
       {
         topic: `A practical guide to ${payload.company} next editorial opportunity`,
+        target_audience: "Security and privacy leaders",
+        target_word_count: 900,
+        key_points: [
+          "Map PII before it reaches the model",
+          "Use tokenisation at the application boundary",
+        ],
+        required_sections: ["What changes with AI copilots", "A practical control plane"],
       },
       700,
     ),

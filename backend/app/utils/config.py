@@ -25,10 +25,28 @@ LLM_MODELS = {
     "openai": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
     "google": os.getenv("GOOGLE_MODEL", "gemini-3.7-flash"),
 }
+# Final drafts and their revisions benefit more from a stronger prose model than
+# the short structured work used to build profiles and suggest topics.
+OPENAI_WRITING_MODEL = os.getenv("OPENAI_WRITING_MODEL", "gpt-4.1")
 DEFAULT_LLM_MODEL = LLM_MODELS.get(DEFAULT_LLM_PROVIDER, LLM_MODELS["openai"])
 # Kept as a compatibility export for scripts and deployments that import it.
 ANTHROPIC_MODEL = LLM_MODELS["anthropic"]
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+
+
+def _cors_origins() -> list[str]:
+    """Return browser origins allowed to call the API.
+
+    ``CORS_ORIGINS`` is comma-separated so one Render deployment can serve a
+    production frontend and any explicitly approved preview URL without opening
+    the API to every website.
+    """
+    configured = os.getenv("CORS_ORIGINS", "")
+    origins = [origin.strip().rstrip("/") for origin in configured.split(",") if origin.strip()]
+    return origins or ["http://localhost:5173"]
+
+
+CORS_ORIGINS = _cors_origins()
 
 
 def _normalise_postgres_url(url: str | None) -> str | None:
