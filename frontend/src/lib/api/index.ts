@@ -11,5 +11,10 @@ export type {
   ReferenceRecord as Reference,
   CrawlResult,
   ProjectSummary as Project,
+  AnalyticsReport as Analytics,
+  AnalysisOutcome,
+  GenerationOutcome,
+  FeedbackOutcome,
+  RunListItem,
 } from "./types";
 export type { OnProgress, ProgressEvent } from "./client";

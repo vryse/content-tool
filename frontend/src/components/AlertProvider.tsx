@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { Close, Info, Mark, Notice } from "./Glyph";
+import { Button } from "./ui/button";
 import { AlertContext, type AlertOptions, type AlertVariant } from "../hooks/useAlert";
 
 type AlertItem = {
@@ -65,14 +66,16 @@ export function AlertProvider({ children }: { children: ReactNode }) {
                   {alert.message}
                 </p>
               </div>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
+                size="icon-xs"
                 aria-label="Dismiss alert"
-                className="mt-0.5 text-ink-3 transition-colors duration-100 hover:text-ink"
+                className="-m-1 mt-[-0.125rem] text-ink-3 hover:text-ink"
                 onClick={() => dismissAlert(alert.id)}
               >
                 <Close size={13} />
-              </button>
+              </Button>
             </div>
           );
         })}

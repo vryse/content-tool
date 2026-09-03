@@ -8,8 +8,27 @@ from tortoise import Tortoise
 from tortoise.transactions import in_transaction
 
 from app.utils.config import tortoise_config
-from app.db.models import Feedback, LearnedPreference, ReferenceDocument, Run, StyleProfileRecord
-from app.models import GenerationRun, ProjectSummary, ReferenceRecord, RevisionInstruction
+from app.db.models import (
+    AnalysisOutcomeRecord,
+    Feedback,
+    FeedbackOutcomeRecord,
+    GenerationOutcomeRecord,
+    LearnedPreference,
+    ReferenceDocument,
+    Run,
+    StyleProfileRecord,
+)
+from app.models import (
+    AnalysisOutcome,
+    AnalyticsReport,
+    FeedbackOutcome,
+    GenerationOutcome,
+    GenerationRun,
+    ProjectSummary,
+    ReferenceRecord,
+    RevisionInstruction,
+    RunListItem,
+)
 from app.utils.metrics import article_from_markdown
 from app.models import ArticlePlan, ArticleRequirements, DraftArticle, EvaluationResult, StyleProfile
 
@@ -68,6 +87,44 @@ async def load_run(run_id: str) -> GenerationRun | None:
         evaluation=evaluation,
         parent_run_id=row.parent_run_id,
     )
+
+
+async def list_runs(company: str) -> list[RunListItem]:
+    """Every saved run for a project, lightest fields only, newest first.
+
+    Deliberately not a join against ``generation_outcomes``: ``runs`` already
+    carries everything a list needs (title, topic, score), and staying keyed
+    off the one table that is guaranteed to exist for every run means a
+    project's history is never short a row because the analytics table
+    lagged behind it.
+    """
+    rows = await Run.filter(company__iexact=company).order_by("-created_at")
+    items: list[RunListItem] = []
+    for row in rows:
+        requirements = ArticleRequirements.model_validate(row.requirements_json)
+        plan = ArticlePlan.model_validate(row.plan_json)
+        evaluation = EvaluationResult.model_validate(row.evaluation_json) if row.evaluation_json else None
+        if row.article_json:
+            draft = DraftArticle.model_validate(row.article_json)
+            word_count = len(draft.markdown.split())
+            section_count = len(draft.sections)
+        else:
+            word_count = len(row.article_markdown.split())
+            section_count = len(plan.sections)
+        items.append(
+            RunListItem(
+                run_id=row.run_id,
+                parent_run_id=row.parent_run_id,
+                title=plan.title,
+                topic=requirements.topic,
+                target_word_count=requirements.target_word_count,
+                word_count=word_count,
+                section_count=section_count,
+                overall_score=evaluation.overall_score if evaluation else None,
+                created_at=row.created_at,
+            )
+        )
+    return items
 
 
 async def save_feedback(
@@ -340,3 +397,127 @@ async def delete_reference(key: str) -> bool:
 async def reference_companies() -> list[str]:
     rows = await ReferenceDocument.all().distinct().order_by("company").values("company")
     return [row["company"] for row in rows]
+
+
+# --- Outcome analytics ------------------------------------------------------
+# One durable row per completed pipeline stage, flattened for cross-run
+# analysis. These are additive to the existing artefacts (style_profiles,
+# runs, feedback) rather than a replacement: the full record stays wherever
+# it already lived, and these rows exist so scores, cost, and volume can be
+# trended without parsing that JSON per row.
+
+
+async def save_analysis_outcome(outcome: AnalysisOutcome) -> None:
+    await AnalysisOutcomeRecord.create(
+        company=outcome.company,
+        source_article_count=outcome.source_article_count,
+        vocabulary_size=outcome.vocabulary_size,
+        outlier_count=outcome.outlier_count,
+        tone_descriptors_json=outcome.tone_descriptors,
+        total_cost_usd=outcome.total_cost_usd,
+        total_tokens=outcome.total_tokens,
+        wall_time_seconds=outcome.wall_time_seconds,
+        created_at=outcome.created_at,
+    )
+
+
+async def list_analysis_outcomes(company: str | None = None) -> list[AnalysisOutcome]:
+    query = AnalysisOutcomeRecord.all()
+    if company:
+        query = query.filter(company__iexact=company)
+    return [
+        AnalysisOutcome(
+            company=row.company,
+            source_article_count=row.source_article_count,
+            vocabulary_size=row.vocabulary_size,
+            outlier_count=row.outlier_count,
+            tone_descriptors=list(row.tone_descriptors_json or []),
+            total_cost_usd=row.total_cost_usd,
+            total_tokens=row.total_tokens,
+            wall_time_seconds=row.wall_time_seconds,
+            created_at=row.created_at,
+        )
+        for row in await query.order_by("created_at")
+    ]
+
+
+async def save_generation_outcome(outcome: GenerationOutcome) -> None:
+    await GenerationOutcomeRecord.update_or_create(
+        run_id=outcome.run_id,
+        defaults={
+            "company": outcome.company,
+            "parent_run_id": outcome.parent_run_id,
+            "overall_score": outcome.overall_score,
+            "dimension_scores_json": outcome.dimension_scores,
+            "section_count": outcome.section_count,
+            "word_count": outcome.word_count,
+            "missing_requirement_count": outcome.missing_requirement_count,
+            "total_cost_usd": outcome.total_cost_usd,
+            "total_tokens": outcome.total_tokens,
+            "wall_time_seconds": outcome.wall_time_seconds,
+            "created_at": outcome.created_at,
+        },
+    )
+
+
+async def list_generation_outcomes(company: str | None = None) -> list[GenerationOutcome]:
+    query = GenerationOutcomeRecord.all()
+    if company:
+        query = query.filter(company__iexact=company)
+    return [
+        GenerationOutcome(
+            run_id=row.run_id,
+            company=row.company,
+            parent_run_id=row.parent_run_id,
+            overall_score=row.overall_score,
+            dimension_scores=dict(row.dimension_scores_json or {}),
+            section_count=row.section_count,
+            word_count=row.word_count,
+            missing_requirement_count=row.missing_requirement_count,
+            total_cost_usd=row.total_cost_usd,
+            total_tokens=row.total_tokens,
+            wall_time_seconds=row.wall_time_seconds,
+            created_at=row.created_at,
+        )
+        for row in await query.order_by("created_at")
+    ]
+
+
+async def save_feedback_outcome(outcome: FeedbackOutcome) -> None:
+    await FeedbackOutcomeRecord.create(
+        run_id=outcome.run_id,
+        company=outcome.company,
+        rating=outcome.rating,
+        human_instruction_count=outcome.human_instruction_count,
+        evaluator_instruction_count=outcome.evaluator_instruction_count,
+        accepted_instruction_count=outcome.accepted_instruction_count,
+        created_at=outcome.created_at,
+    )
+
+
+async def list_feedback_outcomes(company: str | None = None) -> list[FeedbackOutcome]:
+    query = FeedbackOutcomeRecord.all()
+    if company:
+        query = query.filter(company__iexact=company)
+    return [
+        FeedbackOutcome(
+            run_id=row.run_id,
+            company=row.company,
+            rating=row.rating,
+            human_instruction_count=row.human_instruction_count,
+            evaluator_instruction_count=row.evaluator_instruction_count,
+            accepted_instruction_count=row.accepted_instruction_count,
+            created_at=row.created_at,
+        )
+        for row in await query.order_by("created_at")
+    ]
+
+
+async def analytics_report(company: str) -> AnalyticsReport:
+    """Assemble every stored outcome for a project, ready to export and share."""
+    return AnalyticsReport(
+        company=company,
+        analysis_outcomes=await list_analysis_outcomes(company),
+        generation_outcomes=await list_generation_outcomes(company),
+        feedback_outcomes=await list_feedback_outcomes(company),
+    )

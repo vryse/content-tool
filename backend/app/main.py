@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 import hashlib
+import io
 import json
 import os
 import re
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Iterator
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
@@ -24,11 +26,15 @@ from app.ingest import load_article, load_references
 from app.firecrawl import FirecrawlClient
 from app.utils.llm import LLMClient
 from app.models import (
+    AnalysisOutcome,
+    AnalyticsReport,
     ArticleRequirements,
     CrawlRequest,
     CrawlResult,
+    FeedbackOutcome,
     FeedbackResponse,
     FeedbackSubmission,
+    GenerationOutcome,
     GenerationRun,
     LLMProvider,
     ParsedArticle,
@@ -37,6 +43,7 @@ from app.models import (
     ProjectSummary,
     ReferenceRecord,
     RegenerationRequest,
+    RunListItem,
     StyleProfile,
     TopicSuggestion,
     TopicSuggestionRequest,
@@ -47,6 +54,7 @@ from app.utils.progress import ProgressBus
 from app.utils import storage
 from app.utils.retrieve import build_reference_index, retrieve, warm_embedding_model
 from app.store import (
+    analytics_report,
     canonical_company,
     close_database,
     delete_profile,
@@ -57,11 +65,15 @@ from app.store import (
     learned_preferences,
     list_projects,
     list_references,
+    list_runs,
     load_profile,
     load_run,
     profile_sources,
     project_exists,
     rename_project,
+    save_analysis_outcome,
+    save_feedback_outcome,
+    save_generation_outcome,
     save_reference,
     save_run,
 )
@@ -435,12 +447,26 @@ async def create_profile(
         if not articles:
             raise HTTPException(400, "None of the selected documents could be parsed.")
         bus.stage("parse_references", "done", detail=f"{len(articles)} articles")
+        profile_run_id = f"profile-{uuid.uuid4()}"
         built = await build_style_profile(
             articles,
-            LLMClient(f"profile-{uuid.uuid4()}", provider=request.llm_provider or provider, model=request.llm_model or model, bus=bus),
+            LLMClient(profile_run_id, provider=request.llm_provider or provider, model=request.llm_model or model, bus=bus),
             force=True,
             bus=bus,
             source_keys=[record.key for record in records],
+        )
+        summary = await summarize_run(profile_run_id)
+        await save_analysis_outcome(
+            AnalysisOutcome(
+                company=project,
+                source_article_count=len(articles),
+                vocabulary_size=len(built.vocabulary),
+                outlier_count=len(built.outliers),
+                tone_descriptors=built.voice.tone_descriptors,
+                total_cost_usd=summary.estimated_cost_usd,
+                total_tokens=summary.input_tokens + summary.output_tokens,
+                wall_time_seconds=summary.wall_time_seconds,
+            )
         )
         return built.model_dump(mode="json")
 
@@ -538,6 +564,21 @@ async def generate(requirements: ArticleRequirements) -> StreamingResponse:
         )
         bus.stage("persist")
         await save_run(run)
+        summary = await summarize_run(run_id)
+        await save_generation_outcome(
+            GenerationOutcome(
+                run_id=run_id,
+                company=requirements.company,
+                overall_score=evaluation.overall_score,
+                dimension_scores=evaluation.dimension_scores,
+                section_count=len(article.sections),
+                word_count=len(article.markdown.split()),
+                missing_requirement_count=len(evaluation.missing_requirements),
+                total_cost_usd=summary.estimated_cost_usd,
+                total_tokens=summary.input_tokens + summary.output_tokens,
+                wall_time_seconds=summary.wall_time_seconds,
+            )
+        )
         bus.stage("persist", "done")
         return run.model_dump(mode="json")
 
@@ -559,6 +600,20 @@ async def feedback(submission: FeedbackSubmission) -> FeedbackResponse:
         run.article,
         run.evaluation,
         LLMClient(run.run_id, provider=run.requirements.llm_provider, model=run.requirements.llm_model),
+    )
+    human_count = sum(1 for item in instructions if item.source == "human")
+    await save_feedback_outcome(
+        FeedbackOutcome(
+            run_id=run.run_id,
+            company=run.requirements.company,
+            rating=submission.rating,
+            human_instruction_count=human_count,
+            evaluator_instruction_count=len(instructions) - human_count,
+            # Only human-sourced instructions become learned preferences (see
+            # app.feedback.process_feedback / store.remember_preferences), so
+            # the human count doubles as the accepted count.
+            accepted_instruction_count=human_count,
+        )
     )
     return FeedbackResponse(run_id=run.run_id, instructions=instructions)
 
@@ -595,10 +650,41 @@ async def regenerate(run_id: str, request: RegenerationRequest) -> StreamingResp
         )
         bus.stage("persist")
         await save_run(child)
+        summary = await summarize_run(child_run_id)
+        await save_generation_outcome(
+            GenerationOutcome(
+                run_id=child_run_id,
+                company=run.requirements.company,
+                parent_run_id=run.run_id,
+                overall_score=evaluation.overall_score,
+                dimension_scores=evaluation.dimension_scores,
+                section_count=len(revised.sections),
+                word_count=len(revised.markdown.split()),
+                missing_requirement_count=len(evaluation.missing_requirements),
+                total_cost_usd=summary.estimated_cost_usd,
+                total_tokens=summary.input_tokens + summary.output_tokens,
+                wall_time_seconds=summary.wall_time_seconds,
+            )
+        )
         bus.stage("persist", "done")
         return child.model_dump(mode="json")
 
     return streamed(producer)
+
+
+@app.get("/api/runs", response_model=list[RunListItem])
+async def runs(company: str) -> list[RunListItem]:
+    """Every saved run for a project, so a past draft can be found and reopened."""
+    return await list_runs(await canonical_company(company))
+
+
+@app.get("/api/runs/{run_id}", response_model=GenerationRun)
+async def get_run(run_id: str) -> GenerationRun:
+    """The full plan, article and evaluation for one saved run."""
+    run = await load_run(run_id)
+    if run is None:
+        raise HTTPException(404, "Generation run not found.")
+    return run
 
 
 @app.get("/api/runs/{run_id}/summary")
@@ -607,3 +693,95 @@ async def run_summary(run_id: str):
     if run is None:
         raise HTTPException(404, "Generation run not found.")
     return await summarize_run(run_id)
+
+
+# --- Analytics --------------------------------------------------------------
+# Every pipeline stage (profile build, generation run, feedback cycle) writes a
+# flattened outcome row as it completes; these endpoints read that history back
+# for one project so it can be inspected or handed to someone else.
+
+
+@app.get("/api/analytics/{company}", response_model=AnalyticsReport)
+async def analytics(company: str) -> AnalyticsReport:
+    if not await project_exists(company):
+        raise HTTPException(404, f"No project named {company.strip()!r}.")
+    return await analytics_report(company)
+
+
+@app.get("/api/analytics/{company}/export")
+async def analytics_export(company: str) -> StreamingResponse:
+    """A single flat CSV across all three outcome kinds, for sharing outside the app."""
+    if not await project_exists(company):
+        raise HTTPException(404, f"No project named {company.strip()!r}.")
+    report = await analytics_report(company)
+
+    def rows() -> Iterator[str]:
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(
+            [
+                "kind",
+                "created_at",
+                "run_id",
+                "parent_run_id",
+                "overall_score",
+                "rating",
+                "source_article_count_or_instruction_counts",
+                "total_cost_usd",
+                "total_tokens",
+                "wall_time_seconds",
+            ]
+        )
+        for item in report.analysis_outcomes:
+            writer.writerow(
+                [
+                    "analysis",
+                    item.created_at.isoformat(),
+                    "",
+                    "",
+                    "",
+                    "",
+                    f"{item.source_article_count} articles, {item.vocabulary_size} vocab terms",
+                    item.total_cost_usd,
+                    item.total_tokens,
+                    item.wall_time_seconds,
+                ]
+            )
+        for item in report.generation_outcomes:
+            writer.writerow(
+                [
+                    "generation",
+                    item.created_at.isoformat(),
+                    item.run_id,
+                    item.parent_run_id or "",
+                    item.overall_score if item.overall_score is not None else "",
+                    "",
+                    f"{item.section_count} sections, {item.word_count} words",
+                    item.total_cost_usd,
+                    item.total_tokens,
+                    item.wall_time_seconds,
+                ]
+            )
+        for item in report.feedback_outcomes:
+            writer.writerow(
+                [
+                    "feedback",
+                    item.created_at.isoformat(),
+                    item.run_id,
+                    "",
+                    "",
+                    item.rating if item.rating is not None else "",
+                    f"{item.human_instruction_count} human / {item.evaluator_instruction_count} evaluator",
+                    "",
+                    "",
+                    "",
+                ]
+            )
+        yield buffer.getvalue()
+
+    filename = f"{company.strip().replace(' ', '_')}_analytics.csv"
+    return StreamingResponse(
+        rows(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

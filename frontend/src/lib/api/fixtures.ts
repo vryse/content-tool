@@ -7,11 +7,13 @@
  * required to exercise deltas, revised-section markers and the value-change animations.
  */
 import type {
+  AnalyticsReport,
   ArticleRequirements,
   GenerationRun,
   ProjectSummary,
   ReferenceRecord,
   RevisionInstruction,
+  RunListItem,
   RunSummary,
   StyleProfile,
 } from "./types";
@@ -19,6 +21,13 @@ import type {
 export const MOCK_PROFILE: StyleProfile = {
   company: "Protecto AI",
   source_article_count: 3,
+  visual_defaults: {
+    include_table: true,
+    include_flowchart: false,
+    table_reference_count: 2,
+    flowchart_reference_count: 1,
+    source_count: 3,
+  },
   structure: {
     typical_section_count: [4, 4],
     typical_word_count: [124, 162],
@@ -510,6 +519,101 @@ export const MOCK_REFERENCES: ReferenceRecord[] = [
  * Only the first project has a cached profile, so the "generation is blocked
  * until a profile exists" state is reachable by switching to the second.
  */
+/**
+ * Derived from the fixtures above rather than hand-authored again: the profile
+ * build, the two linked runs and the feedback cycle between them are what the
+ * live backend would have written as outcome rows for the same activity.
+ */
+export const MOCK_ANALYTICS: AnalyticsReport = {
+  company: "Protecto AI",
+  analysis_outcomes: [
+    {
+      company: "Protecto AI",
+      source_article_count: MOCK_PROFILE.source_article_count,
+      vocabulary_size: MOCK_PROFILE.vocabulary.length,
+      outlier_count: MOCK_PROFILE.outliers.length,
+      tone_descriptors: MOCK_PROFILE.voice.tone_descriptors,
+      total_cost_usd: 0.0842,
+      total_tokens: 18_420,
+      wall_time_seconds: 26.4,
+      created_at: MOCK_PROFILE.generated_at,
+    },
+  ],
+  generation_outcomes: [
+    {
+      run_id: "run-v1-0001",
+      company: "Protecto AI",
+      parent_run_id: null,
+      overall_score: 80.6,
+      dimension_scores: MOCK_RUNS["run-v1-0001"].evaluation!.dimension_scores,
+      section_count: MOCK_RUNS["run-v1-0001"].article.sections.length,
+      word_count: MOCK_RUNS["run-v1-0001"].article.sections.reduce(
+        (total, section) => total + section.markdown.trim().split(/\s+/).length,
+        0,
+      ),
+      missing_requirement_count: MOCK_RUNS["run-v1-0001"].evaluation!.missing_requirements.length,
+      total_cost_usd: MOCK_SUMMARIES["run-v1-0001"].estimated_cost_usd,
+      total_tokens:
+        MOCK_SUMMARIES["run-v1-0001"].input_tokens + MOCK_SUMMARIES["run-v1-0001"].output_tokens,
+      wall_time_seconds: MOCK_SUMMARIES["run-v1-0001"].wall_time_seconds,
+      created_at: new Date(Date.now() - 3_600_000).toISOString(),
+    },
+    {
+      run_id: "run-v2-0002",
+      company: "Protecto AI",
+      parent_run_id: "run-v1-0001",
+      overall_score: 85.5,
+      dimension_scores: MOCK_RUNS["run-v2-0002"].evaluation!.dimension_scores,
+      section_count: MOCK_RUNS["run-v2-0002"].article.sections.length,
+      word_count: MOCK_RUNS["run-v2-0002"].article.sections.reduce(
+        (total, section) => total + section.markdown.trim().split(/\s+/).length,
+        0,
+      ),
+      missing_requirement_count: MOCK_RUNS["run-v2-0002"].evaluation!.missing_requirements.length,
+      total_cost_usd: MOCK_SUMMARIES["run-v2-0002"].estimated_cost_usd,
+      total_tokens:
+        MOCK_SUMMARIES["run-v2-0002"].input_tokens + MOCK_SUMMARIES["run-v2-0002"].output_tokens,
+      wall_time_seconds: MOCK_SUMMARIES["run-v2-0002"].wall_time_seconds,
+      created_at: new Date(Date.now() - 1_800_000).toISOString(),
+    },
+  ],
+  feedback_outcomes: [
+    {
+      run_id: "run-v1-0001",
+      company: "Protecto AI",
+      rating: 4,
+      human_instruction_count: MOCK_INSTRUCTIONS.filter((item) => item.source === "human").length,
+      evaluator_instruction_count: MOCK_INSTRUCTIONS.filter((item) => item.source === "evaluator")
+        .length,
+      accepted_instruction_count: MOCK_INSTRUCTIONS.filter((item) => item.source === "human")
+        .length,
+      created_at: new Date(Date.now() - 2_700_000).toISOString(),
+    },
+  ],
+};
+
+/** The content library's listing, newest first — a run's title/topic without its full markdown. */
+export const MOCK_RUN_LIST: RunListItem[] = [MOCK_CHILD_RUN_ID, MOCK_ROOT_RUN_ID].map(
+  (runId, index) => {
+    const run = MOCK_RUNS[runId];
+    const wordCount = run.article.sections.reduce(
+      (total, section) => total + section.markdown.trim().split(/\s+/).length,
+      0,
+    );
+    return {
+      run_id: run.run_id,
+      parent_run_id: run.parent_run_id,
+      title: run.article.title,
+      topic: run.requirements.topic,
+      target_word_count: run.requirements.target_word_count,
+      word_count: wordCount,
+      section_count: run.article.sections.length,
+      overall_score: run.evaluation?.overall_score ?? null,
+      created_at: new Date(Date.now() - (index === 0 ? 1_800_000 : 3_600_000)).toISOString(),
+    };
+  },
+);
+
 export const MOCK_PROJECTS: ProjectSummary[] = ["Protecto AI", "Northwind Payments"].map(
   (company, index) => {
     const owned = MOCK_REFERENCES.filter((item) => item.company === company);

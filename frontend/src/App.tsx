@@ -1,37 +1,38 @@
-import { useMemo, useState } from "react";
-import { api, type Requirements } from "./lib/api";
+import { useMemo, useRef, useState } from "react";
+import { motion } from "motion/react";
 import { assembleMarkdown } from "./lib/markdown";
+import { acknowledgeHaptic } from "./lib/haptics";
+import { AnalyticsDialog } from "./components/AnalyticsDialog";
+import { ContentLibraryDialog } from "./components/ContentLibraryDialog";
 import { DraftDialog } from "./components/DraftDialog";
 import { Field, Head, RuleLabel, StatCell } from "./components/Press";
 import { ScoreLedger } from "./components/ScoreLedger";
-import { Cycle, Descend, Frame, Library, Mark, Sheet, Spinner } from "./components/Glyph";
+import {
+  Archive,
+  Chart,
+  Close,
+  Cycle,
+  Discard,
+  Descend,
+  Frame,
+  Grip,
+  Library,
+  Mark,
+  Plus,
+  Sheet,
+  Spinner,
+} from "./components/Glyph";
 import { ProjectSwitcher } from "./components/ProjectSwitcher";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { ProgressButton } from "./components/ProgressButton";
 import { Input } from "./components/ui/input";
+import { Slider } from "./components/ui/slider";
 import { Textarea } from "./components/ui/textarea";
 import { useAlert } from "./hooks/useAlert";
+import { useBrief } from "./hooks/useBrief";
 import { usePipeline } from "./hooks/usePipeline";
 import { useIngest } from "./hooks/useIngest";
-
-/**
- * The brief's `company` is filled from the active project at submit time, so it is
- * absent here: a literal would be a second source of truth for which project the
- * run belongs to, and the wrong one whenever the studio is pointed elsewhere.
- */
-const initialBrief: Omit<Requirements, "company"> = {
-  topic: "",
-  target_audience: "",
-  // Zero renders as an empty numeric field until the editor enters a value or
-  // accepts a reference-based suggestion. The API still rejects it on generation.
-  target_word_count: 0,
-  key_points: [],
-  required_sections: [],
-  include_table: false,
-  include_flowchart: false,
-  llm_provider: "openai",
-};
 
 /** The artefact chain, in the order the pipeline produces it. */
 const STAGES = [
@@ -42,6 +43,8 @@ const STAGES = [
   "Evaluate",
   "Feedback loop",
 ] as const;
+
+const MotionButton = motion.create(Button);
 
 /**
  * A few lines of the draft, for the card that stands in for it before it is opened.
@@ -58,6 +61,117 @@ const excerpt = (markdown: string) =>
     .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
     .replace(/\s+/g, " ")
     .trim();
+
+function EntryList({
+  label,
+  addLabel,
+  values,
+  onChange,
+  sortable = false,
+}: {
+  label: string;
+  addLabel: string;
+  values: string[];
+  onChange: (values: string[]) => void;
+  sortable?: boolean;
+}) {
+  const inputRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+
+  const updateEntry = (index: number, value: string) => {
+    onChange(values.map((entry, entryIndex) => (entryIndex === index ? value : entry)));
+  };
+
+  const addEntry = () => {
+    onChange([...values, ""]);
+    requestAnimationFrame(() => inputRefs.current[values.length]?.focus());
+  };
+
+  const moveEntry = (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex) return;
+    const nextValues = [...values];
+    const [movedEntry] = nextValues.splice(fromIndex, 1);
+    nextValues.splice(toIndex, 0, movedEntry);
+    onChange(nextValues);
+  };
+
+  return (
+    <Field label={label} hint="add one at a time">
+      <div className="grid gap-2">
+        {values.map((value, index) => (
+          <div
+            key={index}
+            onDragOver={
+              sortable
+                ? (event) => {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                  }
+                : undefined
+            }
+            onDrop={
+              sortable
+                ? (event) => {
+                    event.preventDefault();
+                    if (draggedIndex !== null) moveEntry(draggedIndex, index);
+                    setDraggedIndex(null);
+                  }
+                : undefined
+            }
+            className={`flex items-center gap-2 ${draggedIndex === index ? "opacity-50" : ""}`}
+          >
+            {sortable && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-lg"
+                draggable
+                onDragStart={(event) => {
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData("text/plain", String(index));
+                  setDraggedIndex(index);
+                }}
+                onDragEnd={() => setDraggedIndex(null)}
+                aria-label={`Drag to reorder required section ${index + 1}`}
+                title="Drag to reorder"
+                className="shrink-0 cursor-grab rounded-xs text-ink-3 hover:text-ink active:cursor-grabbing"
+              >
+                <Grip size={14} />
+              </Button>
+            )}
+            <Input
+              ref={(input) => {
+                inputRefs.current[index] = input;
+              }}
+              value={value}
+              placeholder={label === "Key points" ? "State a key idea" : "Name a section"}
+              onChange={(event) => updateEntry(index, event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return;
+                event.preventDefault();
+                addEntry();
+              }}
+              className="min-w-0 flex-1"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => onChange(values.filter((_, entryIndex) => entryIndex !== index))}
+              aria-label={`Remove ${label.slice(0, -1).toLowerCase()} ${index + 1}`}
+              className="size-9 shrink-0 px-0"
+            >
+              <Close size={14} />
+            </Button>
+          </div>
+        ))}
+        <Button type="button" variant="secondary" onClick={addEntry} className="w-fit">
+          <Plus size={14} />
+          {addLabel}
+        </Button>
+      </div>
+    </Field>
+  );
+}
 
 export default function App() {
   const {
@@ -84,64 +198,35 @@ export default function App() {
     progress: profileProgress,
   } = useIngest();
   const { showAlert } = useAlert();
-  const [brief, setBrief] = useState(initialBrief);
+  const { brief, update, reset, suggestingTopic, suggestFromReferences } = useBrief(
+    project,
+    profile,
+  );
   const [feedback, setFeedback] = useState("");
   const [rating, setRating] = useState(0);
   // Hand edits are stored against the generated text they were made on, so a new run (or a
   // revert) drops them without an effect having to reset state.
   const [edited, setEdited] = useState<{ base: string; text: string } | null>(null);
   const [draftOpen, setDraftOpen] = useState(false);
-  const [suggestingTopic, setSuggestingTopic] = useState(false);
-
-  const update = <K extends keyof typeof initialBrief>(key: K, value: (typeof initialBrief)[K]) =>
-    setBrief((current) => ({ ...current, [key]: value }));
+  const [analyticsOpen, setAnalyticsOpen] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
   // The project is the ingest library's, not the brief's. It decides which profile and
   // corpus the backend loads, so a copy held here could ask for a profile built from
   // another project's documents. It is shown read-only beside the topic for that reason.
   const runGeneration = async () => {
-    if (!project) return;
-    if (await generate({ ...brief, company: project })) setDraftOpen(true);
-  };
-  const suggestTopic = async () => {
-    if (!project) {
-      showAlert("Choose a project with uploaded references first.");
-      return;
-    }
-    setSuggestingTopic(true);
-    try {
-      const suggestion = await api.suggestTopic({
+    if (busy !== null || !online || !profile || !project) return;
+    if (
+      await generate({
+        ...brief,
         company: project,
-        llm_provider: brief.llm_provider,
-        llm_model: brief.llm_model,
-        topic: brief.topic || undefined,
-        target_audience: brief.target_audience || undefined,
-        target_word_count: brief.target_word_count || undefined,
-        key_points: brief.key_points,
-        required_sections: brief.required_sections,
-      });
-      // A suggestion is a starting point, never a replacement for the editor's
-      // work. Fill each unanswered field independently so partially completed
-      // briefs retain their deliberate choices.
-      setBrief((current) => ({
-        ...current,
-        topic: current.topic.trim() ? current.topic : suggestion.topic,
-        target_audience: current.target_audience.trim()
-          ? current.target_audience
-          : suggestion.target_audience,
-        target_word_count:
-          current.target_word_count > 0 ? current.target_word_count : suggestion.target_word_count,
-        key_points: current.key_points.length ? current.key_points : suggestion.key_points,
-        required_sections: current.required_sections.length
-          ? current.required_sections
-          : suggestion.required_sections,
-      }));
-    } catch (error) {
-      showAlert(error instanceof Error ? error.message : "Could not suggest a topic.");
-    } finally {
-      setSuggestingTopic(false);
+        key_points: brief.key_points.filter((point) => point.trim()),
+        required_sections: brief.required_sections.filter((section) => section.trim()),
+        table_instructions: brief.include_table ? brief.table_instructions?.trim() || null : null,
+      })
+    ) {
+      setDraftOpen(true);
     }
   };
-
   const runRegeneration = async () => {
     if (await regenerate()) setDraftOpen(true);
   };
@@ -150,6 +235,7 @@ export default function App() {
   const draft = edited?.base === generated ? edited.text : generated;
   const setDraft = (text: string) => setEdited({ base: generated, text });
   const draftWords = draft.trim() ? draft.trim().split(/\s+/).length : 0;
+  const canGenerate = busy === null && Boolean(online && profile && project);
 
   const done = (index: number) =>
     index === 0 ? Boolean(profile) : index < 5 ? Boolean(run) : Boolean(instructions.length);
@@ -162,14 +248,17 @@ export default function App() {
           broadsheet does the same thing, and it buys back the vertical band that a
           translucent blurred header used to spend on a wordmark and two controls. */}
       <aside className="flex flex-col border-rule bg-rail max-lg:border-b lg:min-h-0 lg:overflow-y-auto lg:border-r">
-        <div className="flex items-center gap-3 px-5 py-4 max-lg:justify-between">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-5 py-4 max-lg:justify-between">
           <div>
             <p className="t-caps text-brand text-[0.8125rem] tracking-[0.14em]">Vryse</p>
             <p className="t-meta mt-0.5">Editorial systems</p>
           </div>
           {/* On the narrow layout the rail collapses to this strip, so the project
-              switcher, the ingest control and the connection light come along with it. */}
-          <div className="flex items-center gap-2 lg:hidden">
+              switcher, the ingest control and the connection light come along with it.
+              `flex-wrap` on the row above lets this drop to its own line once it no
+              longer fits beside the wordmark, rather than crushing the project name
+              or clipping the connection status off the edge of the screen. */}
+          <div className="flex flex-wrap items-center gap-2 lg:hidden">
             <div className="w-40">
               <ProjectSwitcher compact />
             </div>
@@ -178,6 +267,26 @@ export default function App() {
               label={profileProgress?.label}
               onOpen={() => setIngestOpen(true)}
             />
+            <Button
+              type="button"
+              variant="secondary"
+              size="icon-lg"
+              aria-label="View stored analytics"
+              disabled={!project}
+              onClick={() => setAnalyticsOpen(true)}
+            >
+              <Chart size={14} />
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="icon-lg"
+              aria-label="View saved content"
+              disabled={!project}
+              onClick={() => setLibraryOpen(true)}
+            >
+              <Archive size={14} />
+            </Button>
             <Status online={online} />
           </div>
         </div>
@@ -193,7 +302,7 @@ export default function App() {
               {STAGES.map((stage, index) => (
                 <li
                   key={stage}
-                  className={`flex items-center gap-2.5 border-l py-[5px] pl-2.5 ${
+                  className={`flex items-center gap-2.5 border-l py-[5px] pl-2.5 transition-colors duration-300 ${
                     index === active ? "border-brand" : "border-transparent"
                   }`}
                 >
@@ -205,7 +314,7 @@ export default function App() {
                     )}
                   </span>
                   <span
-                    className={`t-ui-sm truncate font-normal ${
+                    className={`t-ui-sm truncate font-normal transition-colors duration-300 ${
                       done(index) ? "text-ink" : index === active ? "text-ink-2" : "text-ink-3"
                     }`}
                   >
@@ -250,7 +359,27 @@ export default function App() {
             </div>
           </div>
 
-          <div className="mt-auto border-t border-rule pt-3">
+          <div className="mt-auto grid gap-3 border-t border-rule pt-3">
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full justify-start"
+              disabled={!project}
+              onClick={() => setAnalyticsOpen(true)}
+            >
+              <Chart size={14} />
+              Analytics
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full justify-start"
+              disabled={!project}
+              onClick={() => setLibraryOpen(true)}
+            >
+              <Archive size={14} />
+              Saved content
+            </Button>
             <Status online={online} />
           </div>
         </div>
@@ -259,8 +388,29 @@ export default function App() {
       {/* ---------------------------------------------------------------- CANVAS */}
       <main className="min-w-0 lg:min-h-0 lg:overflow-y-auto max-lg:overflow-visible">
         <div className="mx-auto grid max-w-[46rem] gap-10 px-6 py-8 lg:px-10 lg:py-10">
-          <section className="grid gap-5">
-            <Head aside={<span className="t-data-sm text-ink-3">{project || "No project"}</span>}>
+          <form
+            className="grid gap-5"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void runGeneration();
+            }}
+          >
+            <Head
+              aside={
+                <>
+                  <span className="t-data-sm text-ink-3">{project || "No project"}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={reset}
+                    disabled={!project}
+                    className="px-2 py-1"
+                  >
+                    <Discard size={13} /> Reset brief
+                  </Button>
+                </>
+              }
+            >
               The brief
             </Head>
 
@@ -275,7 +425,7 @@ export default function App() {
                 <Button
                   type="button"
                   variant="secondary"
-                  onClick={() => void suggestTopic()}
+                  onClick={() => void suggestFromReferences(project)}
                   disabled={suggestingTopic || busy !== null || !online || !project}
                   className="shrink-0"
                 >
@@ -285,40 +435,45 @@ export default function App() {
               </div>
             </Field>
 
-            <div className="grid gap-5 sm:grid-cols-[1fr_8rem]">
-              <Field label="Target audience">
-                <Input
-                  value={brief.target_audience}
-                  onChange={(e) => update("target_audience", e.target.value)}
-                />
-              </Field>
-              <Field label="Target length">
-                <Input
-                  type="number"
-                  min={100}
-                  value={brief.target_word_count || ""}
-                  onChange={(e) => update("target_word_count", Number(e.target.value))}
-                />
-              </Field>
-            </div>
-
-            <Field label="Key points" hint="one per line">
-              <Textarea
-                rows={3}
-                value={brief.key_points.join("\n")}
-                onChange={(e) => update("key_points", e.target.value.split("\n").filter(Boolean))}
+            <Field label="Target audience">
+              <Input
+                value={brief.target_audience}
+                onChange={(e) => update("target_audience", e.target.value)}
               />
             </Field>
 
-            <Field label="Required sections" hint="one per line">
-              <Textarea
-                rows={2}
-                value={brief.required_sections.join("\n")}
-                onChange={(e) =>
-                  update("required_sections", e.target.value.split("\n").filter(Boolean))
-                }
+            <Field label="Target length" hint={`${brief.target_word_count.toLocaleString()} words`}>
+              <Slider
+                min={400}
+                max={3000}
+                step={100}
+                value={[brief.target_word_count]}
+                aria-label="Target length in words"
+                aria-valuetext={`${brief.target_word_count.toLocaleString()} words`}
+                onValueChange={(value) => {
+                  const nextWordCount = typeof value === "number" ? value : value[0];
+                  if (nextWordCount === undefined) return;
+                  update("target_word_count", nextWordCount);
+                  acknowledgeHaptic();
+                }}
+                className="h-9 cursor-pointer"
               />
             </Field>
+
+            <EntryList
+              label="Key points"
+              addLabel="Add key point"
+              values={brief.key_points}
+              onChange={(values) => update("key_points", values)}
+            />
+
+            <EntryList
+              label="Required sections"
+              addLabel="Add required section"
+              values={brief.required_sections}
+              onChange={(values) => update("required_sections", values)}
+              sortable
+            />
 
             <fieldset className="border-y border-rule py-4">
               <legend className="t-label">Optional visual aids</legend>
@@ -327,34 +482,79 @@ export default function App() {
                 are rendered in the draft and remain editable as Mermaid source.
               </p>
               <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
-                <label className="flex cursor-pointer items-start gap-3 border border-rule bg-inset p-3 transition-colors duration-100 hover:border-rule-strong has-[:focus-visible]:border-brand has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-brand/25">
-                  <input
-                    type="checkbox"
-                    checked={brief.include_table}
-                    onChange={(event) => update("include_table", event.target.checked)}
-                    className="mt-0.5 size-4 shrink-0 cursor-pointer accent-brand"
-                  />
-                  <span>
-                    <span className="t-ui-sm block font-normal text-ink">
-                      Include a comparison table
+                <div className="border border-rule bg-inset p-3 transition-colors duration-100 hover:border-rule-strong has-[:focus-visible]:border-brand has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-brand/25">
+                  <label className="flex cursor-pointer items-start gap-3" htmlFor="include-table">
+                    <Input
+                      id="include-table"
+                      type="checkbox"
+                      checked={brief.include_table}
+                      onChange={(event) => update("include_table", event.target.checked)}
+                      className="mt-0.5 size-4 shrink-0 cursor-pointer rounded-xs accent-brand"
+                    />
+                    <span>
+                      <span className="t-ui-sm block font-normal text-ink">
+                        Include a comparison table
+                      </span>
+                      <span className="t-meta mt-0.5 block leading-[1.45]">
+                        Use a compact Markdown table when it makes the point clearer.
+                      </span>
+                      {profile?.visual_defaults.source_count ? (
+                        <span className="t-data-sm mt-1.5 block text-ink-3">
+                          Project default: {profile.visual_defaults.include_table ? "on" : "off"}
+                          {" · "}
+                          {profile.visual_defaults.table_reference_count}/
+                          {profile.visual_defaults.source_count} references use tables
+                        </span>
+                      ) : null}
                     </span>
-                    <span className="t-meta mt-0.5 block leading-[1.45]">
-                      Use a compact Markdown table when it makes the point clearer.
-                    </span>
-                  </span>
-                </label>
+                  </label>
+                  {brief.include_table ? (
+                    <div className="mt-3 border-t border-rule pt-3">
+                      <label
+                        htmlFor="table-instructions"
+                        className="t-label flex items-center justify-between gap-3"
+                      >
+                        What should the table show?
+                        <span className="t-data-sm normal-case tracking-normal text-ink-3">
+                          Optional
+                        </span>
+                      </label>
+                      <Textarea
+                        id="table-instructions"
+                        value={brief.table_instructions ?? ""}
+                        maxLength={500}
+                        rows={2}
+                        placeholder="For example: Compare tokenisation, masking, and redaction by reversibility and best use case"
+                        aria-label="Table content instructions"
+                        onChange={(event) => update("table_instructions", event.target.value)}
+                        className="mt-2 min-h-20 resize-y bg-paper"
+                      />
+                      <p className="t-meta mt-1.5 leading-[1.45]">
+                        Leave blank and VRYSE will choose the most useful comparison automatically.
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
                 <label className="flex cursor-pointer items-start gap-3 border border-rule bg-inset p-3 transition-colors duration-100 hover:border-rule-strong has-[:focus-visible]:border-brand has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-brand/25">
-                  <input
+                  <Input
                     type="checkbox"
                     checked={brief.include_flowchart}
                     onChange={(event) => update("include_flowchart", event.target.checked)}
-                    className="mt-0.5 size-4 shrink-0 cursor-pointer accent-brand"
+                    className="mt-0.5 size-4 shrink-0 cursor-pointer rounded-xs accent-brand"
                   />
                   <span>
                     <span className="t-ui-sm block font-normal text-ink">Include a flowchart</span>
                     <span className="t-meta mt-0.5 block leading-[1.45]">
                       Render a Mermaid process diagram in the draft.
                     </span>
+                    {profile?.visual_defaults.source_count ? (
+                      <span className="t-data-sm mt-1.5 block text-ink-3">
+                        Project default: {profile.visual_defaults.include_flowchart ? "on" : "off"}
+                        {" · "}
+                        {profile.visual_defaults.flowchart_reference_count}/
+                        {profile.visual_defaults.source_count} references use flowcharts
+                      </span>
+                    ) : null}
                   </span>
                 </label>
               </div>
@@ -370,7 +570,8 @@ export default function App() {
                 step={progress?.step}
                 total={progress?.total}
                 onClick={runGeneration}
-                disabled={busy !== null || !online || !profile || !project}
+                disabled={!canGenerate}
+                type="submit"
               />
               {!profile && (
                 <p className="t-meta">
@@ -380,7 +581,7 @@ export default function App() {
                 </p>
               )}
             </div>
-          </section>
+          </form>
 
           {run && (
             <section className="grid gap-4">
@@ -389,7 +590,7 @@ export default function App() {
                   <>
                     <Badge>{run.article.sections.length} sections</Badge>
                     <Badge>{draftWords.toLocaleString()} words</Badge>
-                    {draft !== generated && <Badge tone="brand">Edited</Badge>}
+                    {draft !== generated && <Badge>Edited</Badge>}
                   </>
                 }
               >
@@ -473,7 +674,12 @@ export default function App() {
               </div>
             )}
 
-            <div>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (busy === null && feedback.trim()) void submitFeedback(feedback, rating);
+              }}
+            >
               <RuleLabel>Feedback</RuleLabel>
               <Textarea
                 className="mt-3"
@@ -486,51 +692,52 @@ export default function App() {
                 <Rating value={rating} onChange={setRating} />
                 <Button
                   variant="secondary"
-                  onClick={() => submitFeedback(feedback, rating)}
+                  type="submit"
                   disabled={busy !== null || !feedback.trim()}
                 >
                   {busy === "feedback" ? <Spinner size={14} /> : <Cycle size={14} />}
                   Transform
                 </Button>
               </div>
+            </form>
 
-              {instructions.length > 0 && (
-                <div className="mt-5">
-                  <RuleLabel>Derived instructions</RuleLabel>
-                  <ol className="mt-3 grid gap-2.5">
-                    {instructions.map((item, index) => (
-                      <li
-                        key={`${item.target}-${index}`}
-                        className="border-l-2 border-brand-rule bg-sheet px-3 py-2.5"
-                      >
-                        <div className="flex items-baseline justify-between gap-2">
-                          <Badge tone="brand">{item.change_type}</Badge>
-                          <span className="t-data-sm text-ink-3">
-                            {item.source} · P{item.priority}
-                          </span>
-                        </div>
-                        <p className="t-ui-sm mt-2 font-normal leading-[1.5] text-ink">
-                          {item.instruction}
-                        </p>
-                        <p className="t-meta mt-1 truncate">Target: {item.target}</p>
-                      </li>
-                    ))}
-                  </ol>
-                  <ProgressButton
-                    idleLabel="Regenerate targeted sections"
-                    icon={<Cycle size={14} />}
-                    running={busy === "regenerate"}
-                    status={progress?.label}
-                    cost={progress?.cost}
-                    step={progress?.step}
-                    total={progress?.total}
-                    onClick={runRegeneration}
-                    disabled={busy !== null}
-                    className="mt-3.5 w-full"
-                  />
-                </div>
-              )}
-            </div>
+            {instructions.length > 0 && (
+              <div className="mt-5">
+                <RuleLabel>Derived instructions</RuleLabel>
+                <ol className="mt-3 grid gap-2.5">
+                  {instructions.map((item, index) => (
+                    <li
+                      key={`${item.target}-${index}`}
+                      className="border-l-2 border-brand-rule bg-sheet px-3 py-2.5"
+                    >
+                      <div className="flex items-baseline justify-between gap-2">
+                        <Badge>{item.change_type}</Badge>
+                        <span className="t-data-sm text-ink-3">
+                          {item.source} · P{item.priority}
+                        </span>
+                      </div>
+                      <p className="t-ui-sm mt-2 font-normal leading-[1.5] text-ink">
+                        {item.instruction}
+                      </p>
+                      <p className="t-meta mt-1 truncate">Target: {item.target}</p>
+                    </li>
+                  ))}
+                </ol>
+                <ProgressButton
+                  idleLabel="Regenerate targeted sections"
+                  icon={<Cycle size={14} />}
+                  running={busy === "regenerate"}
+                  status={progress?.label}
+                  cost={progress?.cost}
+                  step={progress?.step}
+                  total={progress?.total}
+                  onClick={runRegeneration}
+                  disabled={busy !== null}
+                  type="button"
+                  className="mt-3.5 w-full"
+                />
+              </div>
+            )}
           </div>
         ) : (
           <div className="grid gap-6 px-5 py-6">
@@ -564,6 +771,24 @@ export default function App() {
           value={draft}
           onChange={setDraft}
           generated={generated}
+          onError={showAlert}
+        />
+      )}
+
+      {project && (
+        <AnalyticsDialog
+          open={analyticsOpen}
+          onClose={() => setAnalyticsOpen(false)}
+          company={project}
+          onError={showAlert}
+        />
+      )}
+
+      {project && (
+        <ContentLibraryDialog
+          open={libraryOpen}
+          onClose={() => setLibraryOpen(false)}
+          company={project}
           onError={showAlert}
         />
       )}
@@ -607,7 +832,7 @@ function IngestControl({
 /** Connection state. The dot is never the only cue; the word beside it says the same thing. */
 function Status({ online }: { online: boolean | null }) {
   return (
-    <p className="t-meta flex items-center gap-2">
+    <p className="t-meta flex items-center gap-2 whitespace-nowrap">
       <span
         aria-hidden
         className={`size-1.5 ${
@@ -635,19 +860,24 @@ function Rating({ value, onChange }: { value: number; onChange: (value: number) 
         aria-label="Rating out of five"
       >
         {[1, 2, 3, 4, 5].map((step) => (
-          <button
+          <MotionButton
             key={step}
             type="button"
+            variant="ghost"
+            size="icon-xs"
             role="radio"
             aria-checked={value === step}
             aria-label={`${step} out of five`}
             onClick={() => onChange(step)}
-            className={`t-data-sm size-6 transition-colors duration-100 ${
+            initial={false}
+            whileTap={{ scale: 0.88 }}
+            transition={{ type: "spring", stiffness: 560, damping: 28 }}
+            className={`t-data-sm rounded-none transition-colors duration-100 ${
               step <= value ? "bg-brand text-brand-fg" : "bg-sheet text-ink-3 hover:bg-inset"
             }`}
           >
             {step}
-          </button>
+          </MotionButton>
         ))}
       </div>
     </div>

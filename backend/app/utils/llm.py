@@ -58,6 +58,31 @@ def _usage(result: Any) -> tuple[int, int]:
     return int(input_tokens or 0), int(output_tokens or 0)
 
 
+def _structured_result(result: Any, response_model: type[T]) -> tuple[T, int, int]:
+    """Return the parsed value while retaining usage from the raw AI message.
+
+    LangChain's structured-output wrapper normally returns only the parsed
+    Pydantic model. Token metadata belongs to the underlying AIMessage, so it is
+    lost unless ``include_raw=True`` is enabled. Keep compatibility with a bare
+    parsed result for tests and older adapters, while preferring the raw message
+    whenever the wrapper supplies one.
+    """
+    if isinstance(result, dict) and "raw" in result:
+        input_tokens, output_tokens = _usage(result.get("raw"))
+        parsing_error = result.get("parsing_error")
+        if parsing_error is not None:
+            raise parsing_error
+        parsed = result.get("parsed")
+    else:
+        input_tokens, output_tokens = _usage(result)
+        parsed = result
+
+    validated = (
+        parsed if isinstance(parsed, response_model) else response_model.model_validate(parsed)
+    )
+    return validated, input_tokens, output_tokens
+
+
 class LLMClient:
     """Use LangChain adapters while preserving validation, retries, and telemetry."""
 
@@ -78,7 +103,9 @@ class LLMClient:
         if chat is None:
             structured_options = {"method": "function_calling"} if self.provider == "openai" else {}
             chat = _model_for(self.provider, self.model).with_structured_output(
-                response_model, **structured_options
+                response_model,
+                include_raw=True,
+                **structured_options,
             )
             self._structured_chats[response_model] = chat
 
@@ -88,8 +115,9 @@ class LLMClient:
             input_tokens = output_tokens = 0
             try:
                 result = await chat.ainvoke(prompt)
-                input_tokens, output_tokens = _usage(result)
-                validated = result if isinstance(result, response_model) else response_model.model_validate(result)
+                validated, input_tokens, output_tokens = _structured_result(
+                    result, response_model
+                )
                 cost = estimate_cost(input_tokens, output_tokens)
                 await record_call(CallRecord(run_id=self.run_id, stage=stage, model=f"{self.provider}:{self.model}", input_tokens=input_tokens, output_tokens=output_tokens, latency_seconds=timer.elapsed, estimated_cost_usd=cost, success=True))
                 self.bus.cost(input_tokens, output_tokens, cost)

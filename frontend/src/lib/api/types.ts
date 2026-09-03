@@ -53,6 +53,13 @@ export type StyleProfile = {
   formatting_conventions: string[];
   quantitative_baseline: TextMetrics;
   quantitative_stddev: Partial<Record<keyof TextMetrics, number>>;
+  visual_defaults: {
+    include_table: boolean;
+    include_flowchart: boolean;
+    table_reference_count: number;
+    flowchart_reference_count: number;
+    source_count: number;
+  };
   generated_at: string;
   outliers: string[];
 };
@@ -92,6 +99,7 @@ export type ArticleRequirements = {
   key_points: string[];
   required_sections: string[];
   include_table: boolean;
+  table_instructions?: string | null;
   include_flowchart: boolean;
   tone_override?: string | null;
   notes?: string | null;
@@ -191,4 +199,77 @@ export type ReferenceRecord = {
 export type CrawlResult = {
   job_id: string;
   stored: ReferenceRecord[];
+};
+
+/**
+ * One style-profile build, flattened for cross-run analytics. The full
+ * `StyleProfile` still lives behind `/api/profile/{company}`; this is the
+ * durable history row written alongside every build.
+ */
+export type AnalysisOutcome = {
+  company: string;
+  source_article_count: number;
+  vocabulary_size: number;
+  outlier_count: number;
+  tone_descriptors: string[];
+  total_cost_usd: number;
+  total_tokens: number;
+  wall_time_seconds: number;
+  created_at: string;
+};
+
+/**
+ * One generation run, flattened for cross-run analytics. Mirrors what already
+ * sits inside a run's evaluation, so scores and cost can be trended without
+ * opening every run individually.
+ */
+export type GenerationOutcome = {
+  run_id: string;
+  company: string;
+  parent_run_id: string | null;
+  overall_score: number | null;
+  dimension_scores: Record<string, number>;
+  section_count: number;
+  word_count: number;
+  missing_requirement_count: number;
+  total_cost_usd: number;
+  total_tokens: number;
+  wall_time_seconds: number;
+  created_at: string;
+};
+
+/** One human-feedback cycle, flattened for cross-run analytics. */
+export type FeedbackOutcome = {
+  run_id: string;
+  company: string;
+  rating: number | null;
+  human_instruction_count: number;
+  evaluator_instruction_count: number;
+  accepted_instruction_count: number;
+  created_at: string;
+};
+
+/** Everything stored for a project, assembled for the analytics panel and its export. */
+export type AnalyticsReport = {
+  company: string;
+  analysis_outcomes: AnalysisOutcome[];
+  generation_outcomes: GenerationOutcome[];
+  feedback_outcomes: FeedbackOutcome[];
+};
+
+/**
+ * One saved run, light enough to list every run a project has without shipping
+ * every run's full plan and article markdown in the same response. The full
+ * `GenerationRun` behind one of these is fetched only once it is opened.
+ */
+export type RunListItem = {
+  run_id: string;
+  parent_run_id: string | null;
+  title: string;
+  topic: string;
+  target_word_count: number;
+  word_count: number;
+  section_count: number;
+  overall_score: number | null;
+  created_at: string;
 };

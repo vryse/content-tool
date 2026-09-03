@@ -81,6 +81,71 @@ class StyleProfileRecord(models.Model):
         table = "style_profiles"
 
 
+class AnalysisOutcomeRecord(models.Model):
+    """Flattened analytics summary for one style-profile build.
+
+    Kept separate from ``StyleProfileRecord`` (the cached profile itself, one
+    row per company, overwritten on rebuild) so every build leaves a durable,
+    queryable history row instead of the previous build's summary being lost.
+    """
+
+    id = fields.IntField(pk=True)
+    company = fields.CharField(max_length=255, index=True)
+    source_article_count = fields.IntField()
+    vocabulary_size = fields.IntField(default=0)
+    outlier_count = fields.IntField(default=0)
+    tone_descriptors_json = fields.JSONField(default=list)
+    total_cost_usd = fields.FloatField(default=0.0)
+    total_tokens = fields.IntField(default=0)
+    wall_time_seconds = fields.FloatField(default=0.0)
+    created_at = fields.DatetimeField(auto_now_add=True)
+
+    class Meta:
+        table = "analysis_outcomes"
+
+
+class GenerationOutcomeRecord(models.Model):
+    """Flattened analytics summary for one generation run.
+
+    ``runs`` holds the full plan/article/evaluation JSON for replay; this
+    table exists so scores and cost can be trended per company without
+    parsing that JSON per row.
+    """
+
+    id = fields.IntField(pk=True)
+    run_id = fields.CharField(max_length=128, unique=True, index=True)
+    company = fields.CharField(max_length=255, index=True)
+    parent_run_id = fields.CharField(max_length=128, null=True, index=True)
+    overall_score = fields.FloatField(null=True)
+    dimension_scores_json = fields.JSONField(default=dict)
+    section_count = fields.IntField(default=0)
+    word_count = fields.IntField(default=0)
+    missing_requirement_count = fields.IntField(default=0)
+    total_cost_usd = fields.FloatField(default=0.0)
+    total_tokens = fields.IntField(default=0)
+    wall_time_seconds = fields.FloatField(default=0.0)
+    created_at = fields.DatetimeField(auto_now_add=True)
+
+    class Meta:
+        table = "generation_outcomes"
+
+
+class FeedbackOutcomeRecord(models.Model):
+    """Flattened analytics summary for one human-feedback cycle."""
+
+    id = fields.IntField(pk=True)
+    run_id = fields.CharField(max_length=128, index=True)
+    company = fields.CharField(max_length=255, index=True)
+    rating = fields.IntField(null=True)
+    human_instruction_count = fields.IntField(default=0)
+    evaluator_instruction_count = fields.IntField(default=0)
+    accepted_instruction_count = fields.IntField(default=0)
+    created_at = fields.DatetimeField(auto_now_add=True)
+
+    class Meta:
+        table = "feedback_outcomes"
+
+
 class ReferenceDocument(models.Model):
     """Metadata for a reference .docx whose bytes live in Cloudflare R2.
 

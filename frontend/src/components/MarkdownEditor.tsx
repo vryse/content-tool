@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef } from "react";
 import { highlightMarkdown } from "../lib/markdown-highlight";
 import { cn } from "../lib/utils";
+import { Textarea } from "./ui/textarea";
 
 /**
  * A textarea with a highlighted copy of its own text painted behind it. The two layers must
@@ -39,7 +40,7 @@ export function MarkdownEditor({
         className={cn(layer, "pointer-events-none absolute inset-0 overflow-hidden md-code-layer")}
         dangerouslySetInnerHTML={{ __html: painted }}
       />
-      <textarea
+      <Textarea
         ref={textarea}
         value={value}
         onChange={(event) => onChange(event.target.value)}
@@ -48,7 +49,7 @@ export function MarkdownEditor({
         aria-label="Markdown source"
         className={cn(
           layer,
-          "relative h-full resize-none bg-transparent text-transparent caret-brand outline-none selection:bg-brand-tint-2 selection:text-transparent",
+          "relative h-full min-h-0 resize-none rounded-none bg-transparent text-transparent caret-brand outline-none selection:bg-brand-tint-2 selection:text-transparent",
         )}
       />
     </div>

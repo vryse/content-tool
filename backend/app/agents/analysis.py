@@ -15,6 +15,7 @@ from app.models import (
     ParsedArticle,
     StyleProfile,
     TextMetrics,
+    VisualDefaults,
 )
 
 ARTICLE_OBSERVATION_PROMPT = """You are analysing one reference article for a reusable writing-style profile.
@@ -72,6 +73,21 @@ def quantitative_summary(articles: list[ParsedArticle]) -> tuple[TextMetrics, di
     return baseline, {key: round(value, 4) for key, value in deviations.items()}
 
 
+def visual_defaults(articles: list[ParsedArticle]) -> VisualDefaults:
+    """Recommend a visual only when more than half of the corpus uses it."""
+    if not articles:
+        return VisualDefaults()
+    table_reference_count = sum(article.has_table for article in articles)
+    flowchart_reference_count = sum(article.has_flowchart for article in articles)
+    return VisualDefaults(
+        include_table=table_reference_count > len(articles) / 2,
+        include_flowchart=flowchart_reference_count > len(articles) / 2,
+        table_reference_count=table_reference_count,
+        flowchart_reference_count=flowchart_reference_count,
+        source_count=len(articles),
+    )
+
+
 async def build_style_profile(
     articles: list[ParsedArticle],
     llm: LLMClient,
@@ -96,6 +112,7 @@ async def build_style_profile(
 
     bus = bus or NullBus()
     baseline, stddev = quantitative_summary(articles)
+    project_visual_defaults = visual_defaults(articles)
     bus.stage("style_observation", total=len(articles), index=len(articles))
     # Per-article observations are independent by construction, so the profile build
     # costs one round trip instead of N. Only the synthesis below needs them all.
@@ -114,7 +131,12 @@ async def build_style_profile(
     synthesis_prompt = STYLE_SYNTHESIS_PROMPT.format(
         company=company,
         statistics=json.dumps(
-            {"baseline": baseline.model_dump(), "stddev": stddev}, indent=2
+            {
+                "baseline": baseline.model_dump(),
+                "stddev": stddev,
+                "visual_defaults": project_visual_defaults.model_dump(),
+            },
+            indent=2,
         ),
         observations=json.dumps([item.model_dump() for item in observations], indent=2),
     )
@@ -125,6 +147,7 @@ async def build_style_profile(
             "source_article_count": len(articles),
             "quantitative_baseline": baseline,
             "quantitative_stddev": stddev,
+            "visual_defaults": project_visual_defaults,
         }
     )
     bus.stage("style_synthesis", "done", detail=f"{len(profile.vocabulary)} terms")

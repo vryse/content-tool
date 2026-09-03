@@ -5,6 +5,8 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { useIngest } from "../hooks/useIngest";
 
+const MotionButton = motion.create(Button);
+
 /**
  * Picks which project the studio is looking at.
  *
@@ -89,12 +91,14 @@ export function ProjectSwitcher({ compact }: { compact?: boolean }) {
 
   return (
     <div ref={container} className="relative">
-      <button
+      <MotionButton
         type="button"
+        variant="secondary"
         onClick={() => (open ? close() : setOpen(true))}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className={`flex w-full items-center gap-2 rounded-[3px] border border-rule px-2.5 py-1.5 text-left transition-colors duration-100 hover:bg-inset ${
+        whileTap={{ scale: 0.99 }}
+        className={`h-auto w-full justify-start gap-2 rounded-xs border border-rule px-2.5 py-1.5 text-left ${
           open ? "border-rule-strong bg-inset" : "bg-sheet"
         }`}
       >
@@ -105,7 +109,7 @@ export function ProjectSwitcher({ compact }: { compact?: boolean }) {
           </span>
         </span>
         <Caret size={12} className={`shrink-0 text-ink-3 ${open ? "rotate-180" : ""}`} />
-      </button>
+      </MotionButton>
 
       <AnimatePresence>
         {open && (
@@ -115,7 +119,7 @@ export function ProjectSwitcher({ compact }: { compact?: boolean }) {
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.12 }}
             role="listbox"
-            className="absolute left-0 right-0 z-30 mt-1 border border-rule-strong bg-sheet shadow-[0_8px_24px_rgba(0,0,0,0.14)]"
+            className="absolute left-0 right-0 z-30 mt-1 overflow-hidden rounded-xs border border-rule-strong bg-sheet shadow-overlay"
           >
             <ul className="max-h-72 overflow-y-auto divide-y divide-rule-faint">
               {projects.length === 0 && !projectsLoading && (
@@ -129,15 +133,20 @@ export function ProjectSwitcher({ compact }: { compact?: boolean }) {
                 const editing = renaming === item.company;
                 return (
                   <li key={item.company} className="group relative">
-                    <button
+                    <MotionButton
                       type="button"
+                      variant="ghost"
                       role="option"
                       aria-selected={active}
                       onClick={() => {
                         selectProject(item.company);
                         close();
                       }}
-                      className={`flex w-full items-start gap-2 border-l-2 py-2 pl-2 pr-32 text-left transition-colors duration-100 hover:bg-inset ${
+                      initial={false}
+                      whileHover={{ x: 2 }}
+                      whileTap={{ scale: 0.995 }}
+                      transition={{ type: "spring", stiffness: 500, damping: 34 }}
+                      className={`h-auto w-full justify-start gap-2 rounded-none border-l-2 py-2 pl-2 pr-3 text-left hover:bg-inset ${
                         active ? "border-brand bg-brand-tint/40" : "border-transparent"
                       }`}
                     >
@@ -162,10 +171,24 @@ export function ProjectSwitcher({ compact }: { compact?: boolean }) {
                             .join(" · ")}
                         </span>
                       </span>
-                    </button>
-                    <div className="absolute right-1.5 top-2 flex items-center gap-1">
-                      <button
+                    </MotionButton>
+                    {/* Row actions stay out of the way until the row is hovered or
+                        focused, so the project name gets the row's full width
+                        instead of permanently losing a third of it to two buttons
+                        most rows are never touching. The chip floats over the row
+                        on its own surface so it stays legible regardless of the
+                        row's own hover/selected background. */}
+                    <div
+                      className={`absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-1 rounded-xs border border-rule-strong bg-sheet px-1 py-0.5 shadow-overlay transition-opacity duration-100 ${
+                        pending || editing
+                          ? "opacity-100"
+                          : "opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
+                      }`}
+                    >
+                      <Button
                         type="button"
+                        variant="ghost"
+                        size="xs"
                         onClick={() => {
                           setConfirming(null);
                           setRenaming(editing ? null : item.company);
@@ -174,12 +197,14 @@ export function ProjectSwitcher({ compact }: { compact?: boolean }) {
                         disabled={
                           renamingProject === item.company || deletingProject === item.company
                         }
-                        className="rounded-[2px] px-1.5 py-1 text-[0.6875rem] font-medium text-ink-3 transition-colors duration-100 hover:bg-inset hover:text-ink focus-visible:bg-inset focus-visible:text-ink disabled:opacity-40"
+                        className="rounded-xs px-1.5 text-[0.6875rem] text-ink-3 hover:bg-inset hover:text-ink"
                       >
                         {renamingProject === item.company ? <Spinner size={13} /> : "Rename"}
-                      </button>
-                      <button
+                      </Button>
+                      <Button
                         type="button"
+                        variant="ghost"
+                        size="xs"
                         onClick={() => {
                           setRenaming(null);
                           setConfirming(pending ? null : item.company);
@@ -188,7 +213,7 @@ export function ProjectSwitcher({ compact }: { compact?: boolean }) {
                           deletingProject === item.company || renamingProject === item.company
                         }
                         aria-label={`Delete project ${item.company}`}
-                        className="inline-flex items-center gap-1 rounded-[2px] px-1.5 py-1 text-[0.6875rem] font-medium text-ink-3 transition-colors duration-100 hover:bg-negative/10 hover:text-negative focus-visible:bg-negative/10 focus-visible:text-negative disabled:opacity-40"
+                        className="gap-1 rounded-xs px-1.5 text-[0.6875rem] text-ink-3 hover:bg-negative/10 hover:text-negative focus-visible:bg-negative/10 focus-visible:text-negative"
                       >
                         {deletingProject === item.company ? (
                           <Spinner size={13} />
@@ -198,7 +223,7 @@ export function ProjectSwitcher({ compact }: { compact?: boolean }) {
                             Delete
                           </>
                         )}
-                      </button>
+                      </Button>
                     </div>
                     {editing && (
                       <form
@@ -229,7 +254,7 @@ export function ProjectSwitcher({ compact }: { compact?: boolean }) {
                           </Button>
                           <Button
                             type="button"
-                            variant="quiet"
+                            variant="ghost"
                             className="flex-1"
                             onClick={() => setRenaming(null)}
                           >
@@ -258,7 +283,7 @@ export function ProjectSwitcher({ compact }: { compact?: boolean }) {
                             Delete
                           </Button>
                           <Button
-                            variant="quiet"
+                            variant="ghost"
                             className="flex-1"
                             onClick={() => setConfirming(null)}
                           >
@@ -296,7 +321,7 @@ export function ProjectSwitcher({ compact }: { compact?: boolean }) {
                 </div>
               ) : (
                 <Button
-                  variant="quiet"
+                  variant="ghost"
                   className="w-full justify-start"
                   onClick={() => setCreating(true)}
                 >

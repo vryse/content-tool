@@ -2,15 +2,18 @@ import type { OnProgress } from "./client";
 import type { Api } from "./endpoints";
 import type { ReferenceRecord } from "./types";
 import {
+  MOCK_ANALYTICS,
   MOCK_CHILD_RUN_ID,
   MOCK_INSTRUCTIONS,
   MOCK_PROFILE,
   MOCK_PROJECTS,
   MOCK_REFERENCES,
   MOCK_ROOT_RUN_ID,
+  MOCK_RUN_LIST,
   MOCK_RUNS,
   MOCK_SUMMARIES,
 } from "./fixtures";
+import type { AnalyticsReport } from "./types";
 
 export const MOCK_ENABLED =
   import.meta.env.VITE_MOCK === "1" ||
@@ -238,4 +241,81 @@ export const mockApi: Api = {
       onProgress,
     ),
   summary: (runId) => wait(MOCK_SUMMARIES[runId] ?? MOCK_SUMMARIES[MOCK_ROOT_RUN_ID], 320),
+  analytics: (name) =>
+    wait(
+      name.toLowerCase() === MOCK_ANALYTICS.company.toLowerCase()
+        ? { ...MOCK_ANALYTICS, company: name }
+        : { company: name, analysis_outcomes: [], generation_outcomes: [], feedback_outcomes: [] },
+      260,
+    ),
+  // The live endpoint streams a CSV response; offline there is no server to stream from,
+  // so the same rows are serialised client-side into a blob the browser can download.
+  analyticsExportUrl: (name) =>
+    URL.createObjectURL(new Blob([mockAnalyticsCsv(name)], { type: "text/csv" })),
+  runs: (name) =>
+    wait(name.toLowerCase() === MOCK_PROFILE.company.toLowerCase() ? MOCK_RUN_LIST : [], 240),
+  getRun: (runId) => {
+    const run = MOCK_RUNS[runId];
+    return run ? wait(run, 260) : Promise.reject(new Error("Generation run not found."));
+  },
 };
+
+function mockAnalyticsCsv(name: string): string {
+  const report: AnalyticsReport =
+    name.toLowerCase() === MOCK_ANALYTICS.company.toLowerCase()
+      ? MOCK_ANALYTICS
+      : { company: name, analysis_outcomes: [], generation_outcomes: [], feedback_outcomes: [] };
+  const rows = [
+    [
+      "kind",
+      "created_at",
+      "run_id",
+      "parent_run_id",
+      "overall_score",
+      "rating",
+      "detail",
+      "total_cost_usd",
+      "total_tokens",
+      "wall_time_seconds",
+    ],
+    ...report.analysis_outcomes.map((item) => [
+      "analysis",
+      item.created_at,
+      "",
+      "",
+      "",
+      "",
+      `${item.source_article_count} articles, ${item.vocabulary_size} vocab terms`,
+      String(item.total_cost_usd),
+      String(item.total_tokens),
+      String(item.wall_time_seconds),
+    ]),
+    ...report.generation_outcomes.map((item) => [
+      "generation",
+      item.created_at,
+      item.run_id,
+      item.parent_run_id ?? "",
+      item.overall_score !== null ? String(item.overall_score) : "",
+      "",
+      `${item.section_count} sections, ${item.word_count} words`,
+      String(item.total_cost_usd),
+      String(item.total_tokens),
+      String(item.wall_time_seconds),
+    ]),
+    ...report.feedback_outcomes.map((item) => [
+      "feedback",
+      item.created_at,
+      item.run_id,
+      "",
+      "",
+      item.rating !== null ? String(item.rating) : "",
+      `${item.human_instruction_count} human / ${item.evaluator_instruction_count} evaluator`,
+      "",
+      "",
+      "",
+    ]),
+  ];
+  return rows
+    .map((row) => row.map((cell) => `"${cell.replaceAll('"', '""')}"`).join(","))
+    .join("\n");
+}

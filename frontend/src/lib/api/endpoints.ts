@@ -1,11 +1,13 @@
 import { request, stream, type OnProgress } from "./client";
 import type {
+  AnalyticsReport,
   ArticleRequirements,
   CrawlResult,
   GenerationRun,
   ProjectSummary,
   ReferenceRecord,
   RevisionInstruction,
+  RunListItem,
   RunSummary,
   StyleProfile,
   TopicSuggestion,
@@ -133,6 +135,18 @@ export const api = {
     ),
 
   summary: (runId: string) => request<RunSummary>(`/api/runs/${encodeURIComponent(runId)}/summary`),
+
+  /** Every stored analysis/generation/feedback outcome for a project. */
+  analytics: (name: string) => request<AnalyticsReport>(`/api/analytics/${company(name)}`),
+
+  /** A direct download URL for the same data as a flat CSV, for sharing outside the app. */
+  analyticsExportUrl: (name: string) => `/api/analytics/${company(name)}/export`,
+
+  /** Every saved run for a project, lightest fields only, newest first. */
+  runs: (name: string) => request<RunListItem[]>(`/api/runs?company=${company(name)}`),
+
+  /** The full plan, article and evaluation for one saved run, to reopen it. */
+  getRun: (runId: string) => request<GenerationRun>(`/api/runs/${encodeURIComponent(runId)}`),
 };
 
 export type Api = typeof api;
