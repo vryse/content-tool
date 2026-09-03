@@ -503,6 +503,7 @@ export const MOCK_REFERENCES: ReferenceRecord[] = [
       ["AI Data Governance Framework_ A Step-by-Step Implementation Guide.docx", 2_310, 9],
       ["7 Generative AI Security Risks and How to Defend Your Organization.docx", 2_050, 8],
       ["IdeationTechnicalFormat.docx", 860, 4],
+      ["Careers at Protecto AI.md", 286, 2],
     ] as [string, number, number][]
   ).map((row, index) => reference("Protecto AI", "protecto-ai", row, index)),
   ...(

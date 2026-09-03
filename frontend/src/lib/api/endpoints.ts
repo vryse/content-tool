@@ -87,7 +87,7 @@ export const api = {
   },
 
   crawlReferences: (
-    payload: { company: string; client_url: string; blog_path: string; limit: number },
+    payload: { company: string; portfolio_url: string; blog_slug: string; limit: number },
     onProgress?: OnProgress,
   ) =>
     stream<CrawlResult>(
@@ -100,6 +100,15 @@ export const api = {
     request<{ deleted: boolean }>(
       `/api/references/${key.split("/").map(encodeURIComponent).join("/")}`,
       { method: "DELETE" },
+    ),
+
+  deleteReferences: (name: string, keys: string[]) =>
+    request<{ deleted: boolean; removed_keys: string[]; removed_count: number }>(
+      "/api/references/bulk-delete",
+      {
+        method: "POST",
+        body: JSON.stringify({ company: name, reference_keys: keys }),
+      },
     ),
 
   suggestTopic: (

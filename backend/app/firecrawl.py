@@ -42,17 +42,22 @@ class FirecrawlClient:
         except URLError as error:
             raise FirecrawlError(f"Could not reach Firecrawl: {error.reason}") from error
 
-    async def start(self, url: str, include_path: str | None, limit: int) -> str:
+    async def start(self, listing_url: str, limit: int) -> str:
+        """Crawl article links exposed by one listing page, regardless of URL shape."""
         payload: dict[str, Any] = {
-            "url": url,
+            "url": listing_url,
             "limit": limit,
             "ignoreQueryParameters": True,
-            "crawlEntireDomain": include_path is None,
+            # A blog index can link to root-level articles (for example /post) as
+            # well as descendants (/blogs/post). Allow sibling paths, but skip the
+            # sitemap and stop after links directly exposed by the listing page.
+            "crawlEntireDomain": True,
+            "maxDiscoveryDepth": 1,
+            "sitemap": "skip",
             "allowExternalLinks": False,
+            "allowSubdomains": False,
             "scrapeOptions": {"formats": ["markdown"], "onlyMainContent": True},
         }
-        if include_path:
-            payload["includePaths"] = [include_path]
         response = await asyncio.to_thread(self._request, f"{self.base_url}/crawl", "POST", payload)
         job_id = response.get("id")
         if not isinstance(job_id, str) or not job_id:

@@ -46,6 +46,7 @@ export type IngestContextValue = {
   uploading: boolean;
   crawling: boolean;
   deleting: string | null;
+  deletingMany: boolean;
 
   selected: Set<string>;
   toggle: (key: string) => void;
@@ -62,6 +63,7 @@ export type IngestContextValue = {
   upload: (files: File[]) => Promise<void>;
   crawl: (clientUrl: string, blogPath: string, limit: number) => Promise<void>;
   remove: (key: string) => Promise<void>;
+  removeMany: (keys: string[]) => Promise<boolean>;
   build: () => Promise<void>;
 };
 
