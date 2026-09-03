@@ -75,6 +75,7 @@ export function IngestProvider({ children }: { children: ReactNode }) {
   const [uploading, setUploading] = useState(false);
   const [crawling, setCrawling] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [deletingMany, setDeletingMany] = useState(false);
   const [building, setBuilding] = useState(false);
   const [progress, setProgress] = useState<BuildProgress | null>(null);
   // A project whose first document has not been uploaded yet is not in the list
@@ -341,6 +342,42 @@ export function IngestProvider({ children }: { children: ReactNode }) {
     [project, refreshProjects, showAlert, updateLibrary, updateSelection],
   );
 
+  const removeMany = useCallback(
+    async (keys: string[]) => {
+      const target = project;
+      const uniqueKeys = [...new Set(keys)];
+      if (!target || deletingMany || uniqueKeys.length === 0) return false;
+      setDeletingMany(true);
+      try {
+        const result = await api.deleteReferences(target, uniqueKeys);
+        const removed = new Set(result.removed_keys);
+        updateLibrary(target, (current) => ({
+          ...current,
+          references: current.references.filter((item) => !removed.has(item.key)),
+        }));
+        updateSelection(target, (keys) => {
+          const next = new Set(keys);
+          removed.forEach((key) => next.delete(key));
+          return next;
+        });
+        void refreshProjects();
+        showAlert(
+          `Removed ${result.removed_count} short reference${result.removed_count === 1 ? "" : "s"} from ${target}.`,
+          { variant: "success" },
+        );
+        return true;
+      } catch (error) {
+        showAlert(
+          error instanceof Error ? error.message : "The selected documents could not be deleted.",
+        );
+        return false;
+      } finally {
+        setDeletingMany(false);
+      }
+    },
+    [deletingMany, project, refreshProjects, showAlert, updateLibrary, updateSelection],
+  );
+
   const onProgress = useCallback((event: ProgressEvent) => {
     setProgress((current) => ({
       label: event.type === "stage" ? event.label : (current?.label ?? ""),
@@ -351,7 +388,7 @@ export function IngestProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const crawl = useCallback(
-    async (clientUrl: string, blogPath: string, limit: number) => {
+    async (portfolioUrl: string, blogSlug: string, limit: number) => {
       const target = project;
       if (!target || crawling) return;
       setCrawling(true);
@@ -359,7 +396,7 @@ export function IngestProvider({ children }: { children: ReactNode }) {
       clearAlerts();
       try {
         const result = await api.crawlReferences(
-          { company: target, client_url: clientUrl, blog_path: blogPath, limit },
+          { company: target, portfolio_url: portfolioUrl, blog_slug: blogSlug, limit },
           onProgress,
         );
         const stored = result.stored;
@@ -497,6 +534,7 @@ export function IngestProvider({ children }: { children: ReactNode }) {
       uploading,
       crawling,
       deleting,
+      deletingMany,
       selected,
       toggle,
       selectAll,
@@ -508,6 +546,7 @@ export function IngestProvider({ children }: { children: ReactNode }) {
       upload,
       crawl,
       remove,
+      removeMany,
       build,
     }),
     [
@@ -518,6 +557,7 @@ export function IngestProvider({ children }: { children: ReactNode }) {
       clearSelection,
       createProject,
       deleting,
+      deletingMany,
       deletingProject,
       listed,
       loadedFor,
@@ -527,6 +567,7 @@ export function IngestProvider({ children }: { children: ReactNode }) {
       project,
       projectsLoading,
       remove,
+      removeMany,
       removeProject,
       renameProject,
       renamingProject,

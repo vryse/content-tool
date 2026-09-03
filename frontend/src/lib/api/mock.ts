@@ -161,7 +161,7 @@ export const mockApi: Api = {
     return wait(added, 700);
   },
   crawlReferences: (payload, onProgress) => {
-    const slug = payload.blog_path.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "home";
+    const slug = payload.blog_slug.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "") || "home";
     const added: ReferenceRecord[] = [
       {
         key: `references/${payload.company.toLowerCase().replaceAll(" ", "-")}/${slug}-mock-crawl.md`,
@@ -190,6 +190,11 @@ export const mockApi: Api = {
   deleteReference: (key) => {
     mockReferences = mockReferences.filter((item) => item.key !== key);
     return wait({ deleted: true }, 320);
+  },
+  deleteReferences: (_name, keys) => {
+    const selected = new Set(keys);
+    mockReferences = mockReferences.filter((item) => !selected.has(item.key));
+    return wait({ deleted: true, removed_keys: keys, removed_count: keys.length }, 480);
   },
   buildProfile: (_name, _provider, _model, onProgress) =>
     walk(

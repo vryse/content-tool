@@ -84,19 +84,27 @@ export function Field({
   hint,
   children,
   className,
+  group = false,
 }: {
   label: string;
   hint?: string;
   children: ReactNode;
   className?: string;
+  /** Use a named group when the field contains multiple independently labelled controls. */
+  group?: boolean;
 }) {
+  const Component = group ? "div" : "label";
   return (
-    <label className={cn("grid gap-1.5", className)}>
+    <Component
+      className={cn("grid gap-1.5", className)}
+      role={group ? "group" : undefined}
+      aria-label={group ? label : undefined}
+    >
       <span className="t-label flex items-baseline gap-1.5">
         {label}
         {hint ? <span className="t-meta font-normal">{hint}</span> : null}
       </span>
       {children}
-    </label>
+    </Component>
   );
 }

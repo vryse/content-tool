@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 LLMProvider = Literal["anthropic", "openai", "google"]
 
@@ -150,12 +150,25 @@ class ReferenceRecord(BaseModel):
     uploaded_at: datetime | None = None
 
 
+class BulkReferenceDeleteRequest(BaseModel):
+    """Delete an explicit, bounded selection from one project's library."""
+
+    company: str = Field(min_length=1)
+    reference_keys: list[str] = Field(min_length=1, max_length=500)
+
+
 class CrawlRequest(BaseModel):
     """A bounded, same-site Firecrawl collection request."""
 
     company: str = Field(min_length=1)
-    client_url: str = Field(min_length=1)
-    blog_path: str = Field(default="/", min_length=1)
+    portfolio_url: str = Field(
+        min_length=1,
+        validation_alias=AliasChoices("portfolio_url", "client_url"),
+    )
+    blog_slug: str = Field(
+        min_length=1,
+        validation_alias=AliasChoices("blog_slug", "blog_path"),
+    )
     limit: int = Field(default=50, ge=1, le=500)
 
 

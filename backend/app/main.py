@@ -8,7 +8,6 @@ import hashlib
 import io
 import json
 import os
-import re
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any, Awaitable, Callable, Iterator
@@ -29,6 +28,7 @@ from app.models import (
     AnalysisOutcome,
     AnalyticsReport,
     ArticleRequirements,
+    BulkReferenceDeleteRequest,
     CrawlRequest,
     CrawlResult,
     FeedbackOutcome,
@@ -291,21 +291,32 @@ async def upload_references(
     return stored
 
 
-def _crawl_scope(client_url: str, blog_path: str) -> tuple[str, str | None]:
-    """Normalize the website and turn a literal blog path into Firecrawl's path regex."""
-    url = client_url.strip().rstrip("/")
+def _crawl_scope(portfolio_url: str, blog_slug: str) -> str:
+    """Resolve the blog listing page beneath a portfolio URL."""
+    url = portfolio_url.strip()
     parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise HTTPException(400, "Client URL must be a full http(s) URL.")
-    path = blog_path.strip() or "/"
-    if not path.startswith("/"):
-        path = f"/{path}"
-    if path == "/":
-        return url, None
-    # Crawl from the section itself. Firecrawl matches includePaths against URL
-    # pathnames, while `re.escape` keeps a URL containing dots or plus signs literal.
-    escaped = re.escape(path.lstrip("/"))
-    return f"{url}{path.rstrip('/')}", f"{escaped}(?:/.*)?"
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.hostname:
+        raise HTTPException(400, "Portfolio URL must be a full http(s) URL.")
+    if parsed.username or parsed.password or parsed.params or parsed.query or parsed.fragment:
+        raise HTTPException(400, "Portfolio URL cannot contain credentials, parameters, a query, or a fragment.")
+
+    slug = blog_slug.strip()
+    slug_parts = urlparse(slug)
+    if not slug or slug_parts.scheme or slug_parts.netloc or slug_parts.params or slug_parts.query or slug_parts.fragment:
+        raise HTTPException(400, "Blog slug must be a URL path such as /blog.")
+    if any(character.isspace() for character in slug):
+        raise HTTPException(400, "Blog slug cannot contain spaces.")
+
+    # A portfolio can itself live below the host root. Treat the slug as relative
+    # to that portfolio instead of allowing a leading slash to discard its base path.
+    base_segments = [segment for segment in parsed.path.split("/") if segment]
+    slug_segments = [segment for segment in slug.split("/") if segment]
+    if any(segment in {".", ".."} for segment in slug_segments):
+        raise HTTPException(400, "Blog slug cannot contain relative path segments.")
+    path = "/" + "/".join([*base_segments, *slug_segments])
+    path = path.rstrip("/") or "/"
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    return origin if path == "/" else f"{origin}{path}"
 
 
 async def _store_crawled_markdown(company: str, title: str, source_url: str, markdown: str) -> ReferenceRecord:
@@ -346,10 +357,10 @@ async def crawl_references(request: CrawlRequest) -> StreamingResponse:
     """Collect a site's blog section in the background and add pages as Markdown references."""
     async def producer(bus: ProgressBus) -> Any:
         company = await canonical_company(request.company)
-        start_url, include_path = _crawl_scope(request.client_url, request.blog_path)
+        start_url = _crawl_scope(request.portfolio_url, request.blog_slug)
         client = FirecrawlClient()
         bus.stage("crawl_start", detail=start_url)
-        job_id = await client.start(start_url, include_path, request.limit)
+        job_id = await client.start(start_url, request.limit)
         bus.stage("crawl_start", "done", detail="Firecrawl job queued")
         while True:
             status = await client.status(job_id)
@@ -391,6 +402,35 @@ async def remove_reference(key: str) -> dict[str, bool]:
     await storage.forget_cached(key, existing[0].content_hash)
     await delete_reference(key)
     return {"deleted": True}
+
+
+@app.post("/api/references/bulk-delete")
+async def remove_references(request: BulkReferenceDeleteRequest) -> dict[str, object]:
+    """Delete a reviewed selection while keeping it inside one project."""
+    company = await canonical_company(request.company)
+    keys = list(dict.fromkeys(request.reference_keys))
+    records = await get_references(keys)
+    found = {record.key for record in records}
+    missing = sorted(set(keys) - found)
+    if missing:
+        raise HTTPException(404, f"Reference documents not found: {', '.join(missing)}")
+    foreign = sorted(
+        {record.company for record in records if record.company.casefold() != company.casefold()}
+    )
+    if foreign:
+        raise HTTPException(
+            400,
+            f"Selected documents belong to another project: {', '.join(foreign)}.",
+        )
+
+    for record in records:
+        try:
+            await storage.delete_object(record.key)
+        except storage.StorageError as error:
+            raise HTTPException(502, str(error)) from error
+        await storage.forget_cached(record.key, record.content_hash)
+        await delete_reference(record.key)
+    return {"deleted": True, "removed_keys": keys, "removed_count": len(keys)}
 
 
 # --- Style profiles -------------------------------------------------------

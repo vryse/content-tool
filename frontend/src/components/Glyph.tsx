@@ -116,6 +116,13 @@ export const Discard = (props: GlyphProps) => (
   </Glyph>
 );
 
+/** A pencil over a short rule. Edit an existing item. */
+export const Edit = (props: GlyphProps) => (
+  <Glyph {...props}>
+    <path d="m3 11.75.5-2.75 6.75-6.75 2.5 2.5L6 11.5l-3 .25zM8.75 3.75l2.5 2.5M3 13.5h10" />
+  </Glyph>
+);
+
 /** Text set as rules: the rendered view. */
 export const Rendered = (props: GlyphProps) => (
   <Glyph {...props}>

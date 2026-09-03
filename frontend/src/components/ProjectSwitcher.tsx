@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Caret, Discard, Mark, Spinner } from "./Glyph";
+import { Caret, Discard, Edit, Mark, Spinner } from "./Glyph";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { useIngest } from "../hooks/useIngest";
@@ -172,14 +172,12 @@ export function ProjectSwitcher({ compact }: { compact?: boolean }) {
                         </span>
                       </span>
                     </MotionButton>
-                    {/* Row actions stay out of the way until the row is hovered or
-                        focused, so the project name gets the row's full width
-                        instead of permanently losing a third of it to two buttons
-                        most rows are never touching. The chip floats over the row
-                        on its own surface so it stays legible regardless of the
-                        row's own hover/selected background. */}
+                    {/* Project management stays out of the way until the row is
+                        hovered or focused. One icon opens a single panel for both
+                        renaming and deletion, leaving project selection as the
+                        row's clear primary action. */}
                     <div
-                      className={`absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center gap-1 rounded-xs border border-rule-strong bg-sheet px-1 py-0.5 shadow-overlay transition-opacity duration-100 ${
+                      className={`absolute right-1.5 top-1/2 flex -translate-y-1/2 items-center rounded-xs border border-rule-strong bg-sheet p-0.5 shadow-overlay transition-opacity duration-100 ${
                         pending || editing
                           ? "opacity-100"
                           : "opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
@@ -197,35 +195,18 @@ export function ProjectSwitcher({ compact }: { compact?: boolean }) {
                         disabled={
                           renamingProject === item.company || deletingProject === item.company
                         }
-                        className="rounded-xs px-1.5 text-[0.6875rem] text-ink-3 hover:bg-inset hover:text-ink"
+                        aria-label={`Edit project ${item.company}`}
+                        title={`Edit ${item.company}`}
+                        className="size-7 rounded-xs px-0 text-ink-3 hover:bg-inset hover:text-ink"
                       >
-                        {renamingProject === item.company ? <Spinner size={13} /> : "Rename"}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="xs"
-                        onClick={() => {
-                          setRenaming(null);
-                          setConfirming(pending ? null : item.company);
-                        }}
-                        disabled={
-                          deletingProject === item.company || renamingProject === item.company
-                        }
-                        aria-label={`Delete project ${item.company}`}
-                        className="gap-1 rounded-xs px-1.5 text-[0.6875rem] text-ink-3 hover:bg-negative/10 hover:text-negative focus-visible:bg-negative/10 focus-visible:text-negative"
-                      >
-                        {deletingProject === item.company ? (
+                        {renamingProject === item.company || deletingProject === item.company ? (
                           <Spinner size={13} />
                         ) : (
-                          <>
-                            <Discard size={13} />
-                            Delete
-                          </>
+                          <Edit size={14} />
                         )}
                       </Button>
                     </div>
-                    {editing && (
+                    {editing && !pending && (
                       <form
                         className="grid gap-2 border-t border-rule-faint bg-inset px-3 py-2.5"
                         onSubmit={(event) => {
@@ -259,6 +240,19 @@ export function ProjectSwitcher({ compact }: { compact?: boolean }) {
                             onClick={() => setRenaming(null)}
                           >
                             Cancel
+                          </Button>
+                        </div>
+                        <div className="mt-1 flex items-center justify-between border-t border-rule-faint pt-2">
+                          <span className="t-meta text-ink-3">Project and all stored data</span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="xs"
+                            onClick={() => setConfirming(item.company)}
+                            className="gap-1 rounded-xs px-1.5 text-negative hover:bg-negative/10 hover:text-negative focus-visible:bg-negative/10 focus-visible:text-negative"
+                          >
+                            <Discard size={13} />
+                            Delete
                           </Button>
                         </div>
                       </form>
